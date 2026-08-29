@@ -6,19 +6,100 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true
+    "backgroundColor": "#FFF7ED",
+    "primaryColor": "#FF6A2B",
+
+ 
+    "androidStatusBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#FFF7ED",
+      "translucent": false
     },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+
+    "ios": {
+      "supportsTablet": true,
+      "backgroundColor": "#FFF7ED",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Precisamos de aceder à sua galeria para escolher fotos de perfil.",
+        "NSFaceIDUsageDescription": "Usamos biometria para tornar o login mais rápido e seguro."
       }
     },
+
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFF7ED"
+      },
+      "package": "mz.co.zora.app",
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "backgroundColor": "#FFF7ED",
+      "themeColor": "#FF6A2B",
+      "shortName": "Zora",
+      "description": "Carteira digital inteligente",
+      "lang": "pt-MZ",
+      "orientation": "portrait",
+      "scope": "/",
+      "startUrl": "/"
+    },
+
+    "plugins": [
+      [
+        "expo-navigation-bar",
+        {
+          "backgroundColor": "#FFFFFF",
+          "style": "dark",
+          "enforceContrast": false,
+          "position": "relative",
+          "hidden": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FF6A2B"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "A app Zora precisa de aceder às suas fotos para perfil.",
+          "cameraPermission": "A Zora precisa de aceder à câmara."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "A Zora usa Face ID / biometria para autenticação rápida e segura."
+        }
+      ],
+      "expo-sharing",
+      "expo-font"
+    ],
+
+    "extra": {
+      "supabaseUrl": "https://ahvvmyuiphtiuxlvbjaj.supabase.co",
+      "supabaseAnonKey": "sb_publishable_TGPXxS0u7ZjMcNCT_S0-mg_PkZ2ohVw",
+      "eas": {
+        "projectId": "5e8a47e5-32a3-4e20-8c87-399618ce438a"
+      }
+    },
+
+    "owner": "yuranexpo"
   }
 }
+
