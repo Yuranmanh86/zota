@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { appTheme } from '../theme/appTheme';
 import {
   createDepositRequest,
@@ -28,7 +29,7 @@ import {
 import { backend } from '../services/backendClient';
 import { getUserProfile } from '../services/auth';
 import { copyToClipboard } from '../services/referrals';
-
+import { showUserMessage } from '../utils/feedback';
 
 function formatMoney(val: number | string | null | undefined): string {
   const n = Number(val ?? 0);
@@ -42,27 +43,37 @@ function formatMoney(val: number | string | null | undefined): string {
 function statusLabel(s: string) {
   switch (s) {
     case 'pending':
-      return { label: 'A aprovar', color: '#B45309', bg: '#FEF3C7' };
+      return { label: 'A aprovar', color: '#B45309', bg: '#FEF3C7', dot: '#F59E0B' };
     case 'approved':
-      return { label: 'Aprovado', color: '#065F46', bg: '#D1FAE5' };
+      return { label: 'Aprovado', color: '#065F46', bg: '#D1FAE5', dot: '#10B981' };
     case 'rejected':
-      return { label: 'Rejeitado', color: '#991B1B', bg: '#FEE2E2' };
+      return { label: 'Rejeitado', color: '#991B1B', bg: '#FEE2E2', dot: '#EF4444' };
     case 'cancelled':
-      return { label: 'Cancelado', color: '#374151', bg: '#F3F4F6' };
+      return { label: 'Cancelado', color: '#374151', bg: '#F3F4F6', dot: '#9CA3AF' };
     default:
-      return { label: s || '-', color: '#374151', bg: '#F3F4F6' };
+      return { label: s || '-', color: '#374151', bg: '#F3F4F6', dot: '#9CA3AF' };
   }
 }
 
+const ONLY_ACCOUNT = {
+  number: '870023591',
+  holder: 'Helena Isaque',
+  method: 'e-Mola',
+};
+
+const QUICK_AMOUNTS = [500, 1000, 2500, 5000];
+
 export function ReloadScreen() {
   const navigation = useNavigation<any>();
-  const [amount, setAmount] = useState('5000');
+  const [amount, setAmount] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [history, setHistory] = useState<MyDepositRow[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
-  const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
+  const [copiedAccount, setCopiedAccount] = useState<boolean>(false);
+  const [successBanner, setSuccessBanner] = useState<string | null>(null);
   const accountsAnimation = useRef(new Animated.Value(0)).current;
+  const bannerAnimation = useRef(new Animated.Value(0)).current;
   const scrollRef = useRef<ScrollView>(null);
   const numericAmount = Number(amount.replace(/\D/g, '')) || 0;
 
@@ -81,6 +92,28 @@ export function ReloadScreen() {
       refreshAllInternal();
     }, [])
   );
+
+  const flashBanner = useCallback((msg: string) => {
+    setSuccessBanner(msg);
+    bannerAnimation.setValue(0);
+    Animated.parallel([
+      Animated.timing(bannerAnimation, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+    const t = setTimeout(() => {
+      Animated.timing(bannerAnimation, {
+        toValue: 0,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => setSuccessBanner(null));
+    }, 3600);
+    return () => clearTimeout(t);
+  }, [bannerAnimation]);
 
   const refreshAllInternal = useCallback(async () => {
     try {
@@ -161,11 +194,11 @@ export function ReloadScreen() {
 
   const handleReload = async () => {
     if (numericAmount <= 0) {
-      Alert.alert('Valor inválido', 'Informe um valor maior que zero para recarregar.');
+      showUserMessage('Valor inválido', 'Informe um valor maior que zero para recarregar.');
       return;
     }
     if (hasPendingRequest) {
-      Alert.alert(
+      showUserMessage(
         'Pedido pendente',
         'Você já possui um pedido de recarga aguardando aprovação. Aguarde o administrador antes de enviar outro.'
       );
@@ -174,40 +207,74 @@ export function ReloadScreen() {
 
     setIsSubmitting(true);
     try {
-      const res = await createDepositRequest(numericAmount, 'mpesa');
+      const res = await createDepositRequest(numericAmount, 'e-Mola');
       if (res?.success) {
-        Alert.alert(
-          'Pedido enviado',
-          res.message || 'Seu pedido de recarga foi enviado e aguarda aprovação.'
-        );
+        const msg = res.message || 'Seu pedido de recarga foi enviado e aguarda aprovação.';
+        showUserMessage('Pedido enviado', msg);
+        flashBanner('Pedido de recarga submetido com sucesso! Aguardando aprovação.');
         setAmount('');
         refreshAll();
       } else {
-        Alert.alert('Não foi possível enviar', res?.message || 'Tente novamente em breve.');
+        showUserMessage('Não foi possível enviar', res?.message || 'Tente novamente em breve.');
       }
     } catch (err: any) {
-      Alert.alert('Erro', err?.message || 'Erro de conexão.');
+      showUserMessage('Erro', err?.message || 'Erro de conexão.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleCopyAccount = async (account: string) => {
-    const copied = await copyToClipboard(account);
+  const handleCopyAccount = async () => {
+    const copied = await copyToClipboard(ONLY_ACCOUNT.number);
     if (copied) {
-      setCopiedAccount(account);
-      setTimeout(() => setCopiedAccount(null), 1800);
+      setCopiedAccount(true);
+      setTimeout(() => setCopiedAccount(false), 2000);
     } else {
-      Alert.alert('Não foi possível copiar', 'Copie o número manualmente e tente novamente.');
+      showUserMessage('Não foi possível copiar', 'Copie o número manualmente e tente novamente.');
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
+      {successBanner ? (
+        <Animated.View
+          style={[
+            styles.successBanner,
+            {
+              opacity: bannerAnimation,
+              transform: [{
+                translateY: bannerAnimation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-24, 0],
+                }),
+              }],
+            },
+          ]}
+        >
+          <View style={styles.successBannerIconBox}>
+            <Ionicons name="checkmark" size={16} color="#FFF" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={styles.successBannerTitle}>Pedido submetido</Text>
+            <Text style={styles.successBannerText}>{successBanner}</Text>
+          </View>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => setSuccessBanner(null)}
+            hitSlop={{ top: 10, left: 10, bottom: 10, right: 10 }}
+          >
+            <Ionicons name="close" size={16} color="#065F46" />
+          </TouchableOpacity>
+        </Animated.View>
+      ) : null}
+
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={[
+          styles.contentContainer,
+          successBanner ? { paddingTop: 8 } : null,
+        ]}
         {...(Platform.OS === 'web' ? { showsVerticalScrollIndicator: true } : {})}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
@@ -228,127 +295,248 @@ export function ReloadScreen() {
           </View>
         ) : (
           <View style={styles.headerRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.screenTitle}>Recarregar</Text>
-              <Text style={styles.screenSubtitle}>
-                Adicione saldo à sua carteira de forma rápida e segura.
-              </Text>
-            </View>
-            <View style={styles.badge}>
-              <Ionicons name="reload" size={20} color="#FFFFFF" />
-            </View>
+           
           </View>
         )}
 
-        <View style={styles.formCard}>
-            <Text style={styles.sectionTitle}>Pedido de recarga</Text>
-            <Text style={styles.sectionHint}>
-              Primeiro envie o valor para uma das contas abaixo. Depois informe o mesmo valor e envie o pedido. O saldo só será creditado após a aprovação do administrador.
+        <LinearGradient
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          colors={['#FF8A3D', '#FF6A2B', '#FF5A1F']}
+          style={styles.heroGradient}
+        >
+          <View style={styles.heroTop}>
+            <View style={styles.heroPill}>
+              <Ionicons name="wallet" size={14} color="#FF7A00" />
+              <Text style={styles.heroPillText}>Carteira Zora</Text>
+            </View>
+            {hasPendingRequest ? (
+              <View style={styles.heroPendingBadge}>
+                <Ionicons name="time" size={12} color="#B45309" />
+                <Text style={styles.heroPendingText}>1 pedido a aprovar</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.heroMainText}>Envie para a conta</Text>
+          <Text style={styles.heroHighlight}>e-Mola oficial da Zora</Text>
+          <Text style={styles.heroHint}>
+            Copie o número, faça a transferência e depois envie seu pedido abaixo.
+          </Text>
+        </LinearGradient>
+
+        <Animated.View
+          style={[
+            styles.formCard,
+            {
+              opacity: accountsAnimation,
+              transform: [{
+                translateY: accountsAnimation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [14, 0],
+                }),
+              }],
+            },
+          ]}
+        >
+          <View style={styles.accountCard}>
+            <View style={styles.accountCardIconWrap}>
+              <View style={styles.accountCardIcon}>
+                <Ionicons name="person" size={22} color="#FFF" />
+              </View>
+              <View style={styles.accountCardVerified}>
+                <Ionicons name="checkmark" size={10} color="#16A34A" />
+              </View>
+            </View>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <View style={styles.accountCardTitleRow}>
+                <Text style={styles.accountCardHolder}>{ONLY_ACCOUNT.holder}</Text>
+                <View style={styles.accountMethodChip}>
+                  <Ionicons name="phone-portrait-outline" size={11} color="#9A4D00" />
+                  <Text style={styles.accountMethodText}>{ONLY_ACCOUNT.method}</Text>
+                </View>
+              </View>
+              <Text style={styles.accountCardNumber}>{ONLY_ACCOUNT.number}</Text>
+              <Text style={styles.accountCardHint}>Conta oficial • Verificada</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.copyButtonBig,
+              copiedAccount && styles.copyButtonBigCopied,
+            ]}
+            activeOpacity={0.85}
+            onPress={handleCopyAccount}
+          >
+            <Ionicons
+              name={copiedAccount ? 'checkmark-circle' : 'copy-outline'}
+              size={18}
+              color={copiedAccount ? '#166534' : '#C2410C'}
+            />
+            <Text style={[
+              styles.copyButtonBigText,
+              copiedAccount && { color: '#166534' },
+            ]}>
+              {copiedAccount ? 'Número copiado!' : 'Copiar número da conta'}
             </Text>
+          </TouchableOpacity>
 
-            <Animated.View
-              style={[
-                styles.accountsBox,
-                {
-                  opacity: accountsAnimation,
-                  transform: [{ translateY: accountsAnimation.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
-                },
-              ]}
-            >
-              <View style={styles.accountsTitleRow}>
-                <View style={styles.accountsIcon}>
-                  <Ionicons name="checkmark-circle" size={18} color="#16A34A" />
-                </View>
-                <View>
-                  <Text style={styles.accountsTitle}>Contas para envio</Text>
-                  <Text style={styles.accountsSubtitle}>Escolha uma conta para fazer o pagamento</Text>
-                </View>
+          <View style={styles.stepsRow}>
+            <View style={styles.stepItem}>
+              <View style={styles.stepDot}>
+                <Text style={styles.stepDotText}>1</Text>
               </View>
-              <View style={styles.accountRow}>
-                <View style={styles.accountCopy}>
-                  <Text style={styles.accountHolder}>Clementina</Text>
-                  <Text style={styles.accountNumber}>874974566</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.copyButton}
-                  onPress={() => handleCopyAccount('874974566')}
-                  accessibilityLabel="Copiar conta de Clementina"
-                >
-                  <Ionicons name={copiedAccount === '874974566' ? 'checkmark' : 'copy-outline'} size={16} color="#C2410C" />
-                  <Text style={styles.copyButtonText}>{copiedAccount === '874974566' ? 'Copiado' : 'Copiar'}</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.accountRow}>
-                <View style={styles.accountCopy}>
-                  <Text style={styles.accountHolder}>Zora</Text>
-                  <Text style={styles.accountNumber}>866554441</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.copyButton}
-                  onPress={() => handleCopyAccount('866554441')}
-                  accessibilityLabel="Copiar conta Zora"
-                >
-                  <Ionicons name={copiedAccount === '866554441' ? 'checkmark' : 'copy-outline'} size={16} color="#C2410C" />
-                  <Text style={styles.copyButtonText}>{copiedAccount === '866554441' ? 'Copiado' : 'Copiar'}</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.accountsNote}>Após o envio, faça o pedido abaixo e aguarde a conferência do administrador.</Text>
-            </Animated.View>
-
-            <Text style={styles.sectionTitle}>Valor do pedido</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="cash-outline" size={18} color="#FF7A00" />
-              <TextInput
-                style={styles.input}
-                value={amount}
-                onChangeText={setAmount}
-                keyboardType="numeric"
-                placeholder="Ex: 5000"
-                placeholderTextColor="#A1A1AA"
-                editable={!hasPendingRequest}
-              />
+              <Text style={styles.stepText}>Copie o número e envie o valor</Text>
             </View>
-
-            <View style={styles.summaryBox}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Valor do pedido</Text>
-                <Text style={styles.summaryValue}>{formatMoney(numericAmount)}</Text>
+            <View style={styles.stepDivider} />
+            <View style={styles.stepItem}>
+              <View style={styles.stepDot}>
+                <Text style={styles.stepDotText}>2</Text>
               </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Status do pedido</Text>
-                <Text style={styles.summaryValueStrong}>
-                  {hasPendingRequest ? 'Aguardando aprovação' : 'Pronto para enviar'}
+              <Text style={styles.stepText}>Informe o mesmo valor abaixo</Text>
+            </View>
+            <View style={styles.stepDivider} />
+            <View style={styles.stepItem}>
+              <View style={styles.stepDot}>
+                <Text style={styles.stepDotText}>3</Text>
+              </View>
+              <Text style={styles.stepText}>Aguarde a aprovação da Zora</Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        <View style={styles.formCard}>
+          <Text style={styles.sectionTitle}>Valor do pedido</Text>
+
+          <View style={styles.inputWrapper}>
+            <View style={styles.inputCurrencyTag}>
+              <Text style={styles.inputCurrencyText}>MT</Text>
+            </View>
+            <TextInput
+              style={styles.input}
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+              placeholder="Ex: 5 000"
+              placeholderTextColor="#A1A1AA"
+              editable={!hasPendingRequest && !isSubmitting}
+            />
+            {amount ? (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setAmount('')}
+                hitSlop={{ top: 8, left: 8, bottom: 8, right: 8 }}
+              >
+                <Ionicons name="close-circle" size={18} color="#CBD5E1" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <Text style={styles.quickLabel}>Valores rápidos</Text>
+          <View style={styles.quickAmountRow}>
+            {QUICK_AMOUNTS.map((v) => (
+              <TouchableOpacity
+                key={v}
+                activeOpacity={0.75}
+                style={[
+                  styles.quickAmountBtn,
+                  Number(amount) === v ? styles.quickAmountBtnActive : null,
+                  (hasPendingRequest || isSubmitting) ? { opacity: 0.55 } : null,
+                ]}
+                onPress={() => {
+                  if (hasPendingRequest || isSubmitting) return;
+                  setAmount(String(v));
+                }}
+              >
+                <Text style={[
+                  styles.quickAmountText,
+                  Number(amount) === v ? styles.quickAmountTextActive : null,
+                ]}>
+                  {v.toLocaleString('pt-MZ')}
                 </Text>
-              </View>
-            </View>
+              </TouchableOpacity>
+            ))}
+          </View>
 
+          <View style={styles.summaryBox}>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Valor do pedido</Text>
+              <Text style={styles.summaryValue}>{formatMoney(numericAmount)}</Text>
+            </View>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Método de envio</Text>
+              <Text style={styles.summaryValue}>{ONLY_ACCOUNT.method}</Text>
+            </View>
+            <View style={[styles.summaryRow, styles.summaryRowStrong]}>
+              <Text style={styles.summaryLabel}>Status</Text>
+              <Text
+                style={[
+                  styles.summaryValueStrong,
+                  hasPendingRequest ? { color: '#B45309' } : null,
+                ]}
+              >
+                {hasPendingRequest
+                  ? '⏳ Pedido a aprovar'
+                  : numericAmount > 0
+                    ? 'Pronto para enviar'
+                    : 'Informe o valor'}
+              </Text>
+            </View>
+          </View>
+
+          {hasPendingRequest ? (
             <TouchableOpacity
-              style={[
-                styles.submitButton,
-                (isSubmitting || hasPendingRequest) && styles.submitButtonDisabled,
-              ]}
+              style={styles.infoBanner}
               activeOpacity={0.9}
-              onPress={handleReload}
-              disabled={isSubmitting || hasPendingRequest}
+              onPress={() => {
+                try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {}
+              }}
             >
-              {isSubmitting ? (
-                <>
-                  <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 10 }} />
-                  <Text style={styles.submitButtonText}>Enviando pedido...</Text>
-                </>
-              ) : (
-                <Text style={styles.submitButtonText}>
-                  {hasPendingRequest ? 'Pedido pendente' : 'Enviar pedido'}
-                </Text>
-              )}
+              <Ionicons name="information-circle" size={18} color="#92400E" />
+              <Text style={styles.infoBannerText}>
+                Pedido pendente — aguarde aprovação antes de enviar outro.
+              </Text>
             </TouchableOpacity>
+          ) : null}
+
+          <TouchableOpacity
+            style={[
+              styles.submitButton,
+              (isSubmitting || hasPendingRequest || numericAmount <= 0) &&
+                styles.submitButtonDisabled,
+            ]}
+            activeOpacity={0.9}
+            onPress={handleReload}
+            disabled={isSubmitting || hasPendingRequest || numericAmount <= 0}
+          >
+            {isSubmitting ? (
+              <>
+                <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 10 }} />
+                <Text style={styles.submitButtonText}>Enviando pedido...</Text>
+              </>
+            ) : hasPendingRequest ? (
+              <>
+                <Ionicons name="time-outline" size={18} color="#FFF" />
+                <Text style={styles.submitButtonText}>  Pedido pendente</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="send-outline" size={18} color="#FFF" />
+                <Text style={styles.submitButtonText}>  Enviar pedido de recarga</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.historyCard}>
           <View style={styles.historyHeader}>
             <View>
               <Text style={styles.historyTitle}>Histórico de recargas</Text>
-              <Text style={styles.historyMeta}>Últimos pedidos</Text>
+              <Text style={styles.historyMeta}>
+                {history.length === 0
+                  ? 'Ainda sem pedidos'
+                  : `${history.length} pedido${history.length === 1 ? '' : 's'}`}
+              </Text>
             </View>
             <TouchableOpacity
               style={styles.historyRefreshBtn}
@@ -362,20 +550,29 @@ export function ReloadScreen() {
 
           {history.length === 0 ? (
             <View style={styles.historyEmpty}>
-              <Ionicons name="file-tray-outline" size={32} color="#D1D5DB" />
-              <Text style={styles.historyEmptyText}>Ainda não tem pedidos de recarga.</Text>
+              <View style={styles.historyEmptyIcon}>
+                <Ionicons name="file-tray-outline" size={26} color="#CBD5E1" />
+              </View>
+              <Text style={styles.historyEmptyTitle}>Sem pedidos ainda</Text>
+              <Text style={styles.historyEmptyText}>
+                Seu histórico de recargas aparecerá aqui após enviar um pedido.
+              </Text>
             </View>
           ) : (
             history.map((item) => {
               const s = statusLabel(item.status);
               return (
                 <View key={item.id} style={styles.historyItem}>
-                  <View style={styles.historyItemIconWrap}>
-                    <Ionicons name="arrow-down-outline" size={16} color="#065F46" />
+                  <View style={[styles.historyItemIconWrap, { backgroundColor: s.bg }]}>
+                    <Ionicons
+                      name="arrow-down-outline"
+                      size={16}
+                      color={s.color}
+                    />
                   </View>
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={styles.historyItemTitle}>
-                      Recarga via {item.payment_method || 'mpesa'}
+                      Recarga via {item.payment_method || ONLY_ACCOUNT.method}
                     </Text>
                     <Text style={styles.historyItemSubtitle}>
                       {new Date(item.created_at).toLocaleString('pt-PT')}
@@ -385,6 +582,7 @@ export function ReloadScreen() {
                   <View style={styles.historyRight}>
                     <Text style={styles.historyAmount}>+{formatMoney(item.amount)}</Text>
                     <View style={[styles.badgePill, { backgroundColor: s.bg }]}>
+                      <View style={[styles.badgeDot, { backgroundColor: s.dot }]} />
                       <Text style={[styles.badgePillText, { color: s.color }]}>{s.label}</Text>
                     </View>
                   </View>
@@ -402,6 +600,51 @@ const styles = StyleSheet.create({
   container: { flex: 1, minHeight: 0, height: '100%', backgroundColor: '#FFF7ED' },
   scroll: { flex: 1, minHeight: 0, ...(Platform.OS === 'web' ? { height: '100%', overflow: 'scroll' } : {}) },
   contentContainer: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 140 },
+
+  successBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 12,
+    right: 12,
+    zIndex: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    borderWidth: 1,
+    borderColor: '#6EE7B7',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+    shadowColor: '#059669',
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  successBannerIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successBannerTitle: {
+    color: '#065F46',
+    fontWeight: '900',
+    fontSize: 13,
+    fontFamily: appTheme.fontFamily,
+  },
+  successBannerText: {
+    color: '#047857',
+    fontSize: 11.5,
+    marginTop: 2,
+    lineHeight: 16,
+    fontFamily: appTheme.fontFamily,
+    fontWeight: '600',
+  },
+
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -434,19 +677,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
   },
-  heroCard: { borderRadius: 24, padding: 18, marginBottom: 16 },
-  heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  heroLabel: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
-    fontFamily: appTheme.fontFamily,
+
+  heroGradient: {
+    borderRadius: 24,
+    padding: 18,
+    marginBottom: 16,
+    overflow: 'hidden',
+    shadowColor: '#FF6A2B',
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
   },
-  heroValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    marginTop: 4,
-    fontFamily: appTheme.fontFamily,
+  heroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 18,
   },
   heroPill: {
     flexDirection: 'row',
@@ -459,16 +706,46 @@ const styles = StyleSheet.create({
   heroPillText: {
     color: '#FF7A00',
     marginLeft: 4,
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 11,
     fontFamily: appTheme.fontFamily,
   },
-  heroSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
-    marginTop: 10,
+  heroPendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  heroPendingText: {
+    color: '#92400E',
+    marginLeft: 4,
+    fontWeight: '800',
+    fontSize: 11,
     fontFamily: appTheme.fontFamily,
   },
+  heroMainText: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: appTheme.fontFamily,
+  },
+  heroHighlight: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '900',
+    marginTop: 4,
+    fontFamily: appTheme.fontFamily,
+  },
+  heroHint: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 12.5,
+    marginTop: 8,
+    lineHeight: 18,
+    fontFamily: appTheme.fontFamily,
+  },
+
   formCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
@@ -478,186 +755,321 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
     color: '#111827',
-    marginBottom: 10,
-    marginTop: 6,
-    fontFamily: appTheme.fontFamily,
-  },
-  sectionHint: {
-    fontSize: 12,
-    color: '#6B7280',
     marginBottom: 12,
-    lineHeight: 18,
     fontFamily: appTheme.fontFamily,
   },
-  accountsBox: {
+
+  accountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#F0FDF4',
-    borderRadius: 18,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#86EFAC',
-    padding: 12,
     marginBottom: 12,
+  },
+  accountCardIconWrap: {
+    position: 'relative',
+  },
+  accountCardIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#16A34A',
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.2,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  accountsTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  accountsIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: '#DCFCE7',
+  accountCardVerified: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#FFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 9,
   },
-  accountsTitle: { color: '#166534', fontSize: 13, fontWeight: '900', fontFamily: appTheme.fontFamily },
-  accountsSubtitle: { color: '#4D7C0F', fontSize: 10.5, marginTop: 2, fontFamily: appTheme.fontFamily },
-  accountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 10, marginTop: 7, borderRadius: 14, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#BBF7D0' },
-  accountCopy: { flex: 1 },
-  accountHolder: { color: '#166534', fontSize: 12, fontWeight: '800', fontFamily: appTheme.fontFamily },
-  accountNumber: { color: '#15803D', fontSize: 19, fontWeight: '900', letterSpacing: 1.2, marginTop: 2, fontFamily: appTheme.fontFamily },
-  copyButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#4ADE80' },
-  copyButtonText: { color: '#166534', fontSize: 11, fontWeight: '800', marginLeft: 5, fontFamily: appTheme.fontFamily },
-  accountsNote: { color: '#166534', fontSize: 11, lineHeight: 16, marginTop: 10, fontWeight: '600', fontFamily: appTheme.fontFamily },
+  accountCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  accountCardHolder: {
+    color: '#166534',
+    fontSize: 16,
+    fontWeight: '900',
+    fontFamily: appTheme.fontFamily,
+  },
+  accountMethodChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#FFD3A7',
+  },
+  accountMethodText: {
+    color: '#9A4D00',
+    fontSize: 10.5,
+    fontWeight: '800',
+    marginLeft: 4,
+    fontFamily: appTheme.fontFamily,
+  },
+  accountCardNumber: {
+    color: '#15803D',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+    fontFamily: appTheme.fontFamily,
+  },
+  accountCardHint: {
+    color: '#4D7C0F',
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '700',
+    fontFamily: appTheme.fontFamily,
+  },
+
+  copyButtonBig: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFD3A7',
+    marginBottom: 14,
+  },
+  copyButtonBigCopied: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#4ADE80',
+  },
+  copyButtonBigText: {
+    marginLeft: 8,
+    color: '#C2410C',
+    fontWeight: '800',
+    fontSize: 13,
+    fontFamily: appTheme.fontFamily,
+  },
+
+  stepsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFDF9',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#FEE7CC',
+  },
+  stepItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  stepDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#FFE1C2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  stepDotText: {
+    color: '#9A4D00',
+    fontSize: 11,
+    fontWeight: '900',
+    fontFamily: appTheme.fontFamily,
+  },
+  stepText: {
+    color: '#7C2D12',
+    fontSize: 10,
+    textAlign: 'center',
+    lineHeight: 14,
+    fontWeight: '700',
+    fontFamily: appTheme.fontFamily,
+  },
+  stepDivider: {
+    width: 8,
+    height: 1.5,
+    backgroundColor: '#FED7AA',
+    marginTop: 10,
+    borderRadius: 2,
+  },
+
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFF7ED',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#FFD3A7',
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 2,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  inputCurrencyTag: {
+    backgroundColor: '#FF7A00',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  inputCurrencyText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
+    fontFamily: appTheme.fontFamily,
   },
   input: {
     flex: 1,
-    marginLeft: 8,
+    marginLeft: 10,
     color: '#111827',
-    fontSize: 15,
+    fontSize: 17,
+    fontWeight: '800',
+    fontFamily: appTheme.fontFamily,
+  },
+  quickLabel: {
+    color: '#9A4D00',
+    fontSize: 11.5,
+    fontWeight: '700',
+    marginBottom: 8,
     fontFamily: appTheme.fontFamily,
   },
   quickAmountRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 10,
     marginBottom: 4,
   },
   quickAmountBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+    minWidth: 80,
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 14,
     backgroundColor: '#FFF7ED',
     borderWidth: 1,
     borderColor: '#FFD3A7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickAmountBtnActive: {
+    backgroundColor: '#FFE8D4',
+    borderColor: '#FF7A00',
+    shadowColor: '#FF7A00',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 1,
   },
   quickAmountText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 12.5,
+    fontWeight: '800',
     color: '#9A4D00',
     fontFamily: appTheme.fontFamily,
   },
-  methodsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
-  methodCard: {
-    width: '23%',
-    minWidth: 80,
-    backgroundColor: '#FFF7ED',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#FFE1C2',
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    alignItems: 'center',
+  quickAmountTextActive: {
+    color: '#C2410C',
   },
-  methodCardActive: { borderColor: '#FF7A00', backgroundColor: '#FFF3E8' },
-  methodHeader: { flexDirection: 'row', alignItems: 'center' },
-  methodName: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6B7280',
-    marginLeft: 4,
-    fontFamily: appTheme.fontFamily,
-  },
-  methodNameActive: { color: '#FF7A00' },
-  methodSubtitle: {
-    fontSize: 10,
-    color: '#9CA3AF',
-    marginTop: 4,
-    textAlign: 'center',
-    fontFamily: appTheme.fontFamily,
-  },
-  methodBadge: {
-    marginTop: 6,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  methodBadgeActive: { backgroundColor: '#FFE1C2' },
-  methodBadgeText: {
-    fontSize: 10,
-    color: '#6B7280',
-    fontWeight: '700',
-    fontFamily: appTheme.fontFamily,
-  },
-  methodBadgeTextActive: { color: '#C2410C' },
+
   summaryBox: {
     backgroundColor: '#FFF7ED',
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#FFD3A7',
-    marginVertical: 12,
+    marginVertical: 14,
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    marginBottom: 8,
+  },
+  summaryRowStrong: {
+    borderTopWidth: 1,
+    borderTopColor: '#FED7AA',
+    paddingTop: 10,
+    marginTop: 2,
+    marginBottom: 0,
   },
   summaryLabel: {
     color: '#9A4D00',
-    fontSize: 12,
+    fontSize: 12.5,
+    fontWeight: '600',
     fontFamily: appTheme.fontFamily,
   },
   summaryValue: {
     color: '#111827',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
     fontFamily: appTheme.fontFamily,
   },
   summaryValueStrong: {
     color: '#FF7A00',
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 13.5,
+    fontWeight: '900',
     fontFamily: appTheme.fontFamily,
   },
+
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  infoBannerText: {
+    flex: 1,
+    marginLeft: 8,
+    color: '#92400E',
+    fontSize: 12,
+    fontWeight: '800',
+    fontFamily: appTheme.fontFamily,
+    lineHeight: 16,
+  },
+
   submitButton: {
     backgroundColor: '#FF7A00',
     paddingVertical: 14,
-    borderRadius: 16,
+    borderRadius: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#FF7A00',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
+    shadowOpacity: 0.26,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
   },
-  submitButtonDisabled: { opacity: 0.7 },
+  submitButtonDisabled: { opacity: 0.65 },
   submitButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    marginRight: 8,
+    fontSize: 14.5,
+    fontWeight: '800',
     fontFamily: appTheme.fontFamily,
   },
+
   historyCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
@@ -703,12 +1115,30 @@ const styles = StyleSheet.create({
   },
   historyEmpty: {
     alignItems: 'center',
-    paddingVertical: 24,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+  },
+  historyEmptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  historyEmptyTitle: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '800',
+    fontFamily: appTheme.fontFamily,
   },
   historyEmptyText: {
-    marginTop: 8,
-    fontSize: 12,
+    marginTop: 4,
+    fontSize: 11.5,
     color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 16,
     fontFamily: appTheme.fontFamily,
   },
   historyItem: {
@@ -721,8 +1151,7 @@ const styles = StyleSheet.create({
   historyItemIconWrap: {
     width: 36,
     height: 36,
-    borderRadius: 18,
-    backgroundColor: '#ECFDF3',
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -740,8 +1169,8 @@ const styles = StyleSheet.create({
   },
   historyRight: { alignItems: 'flex-end' },
   historyAmount: {
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '900',
     color: '#065F46',
     fontFamily: appTheme.fontFamily,
   },
@@ -750,10 +1179,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  badgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 5,
   },
   badgePillText: {
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '800',
     fontFamily: appTheme.fontFamily,
   },
   webHeader: {

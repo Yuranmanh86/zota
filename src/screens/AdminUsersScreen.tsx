@@ -1173,20 +1173,22 @@ const styles = StyleSheet.create({
   },
 
   adjustBtn: {
-    marginTop: 14,
+    flex: 1,
+    minWidth: 0,
+    marginTop: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 5,
     backgroundColor: ZORA_ORANGE,
-    paddingVertical: 13,
+    paddingVertical: 11,
     borderRadius: 16,
     ...shadow({ color: ZORA_ORANGE, offset: { width: 0, height: 4 }, opacity: 0.28, radius: 10, elevation: 3 }),
   },
   adjustBtnText: {
     color: '#fff',
     fontWeight: '800',
-    fontSize: 14,
+    fontSize: 11.5,
     fontFamily: appTheme.fontFamily,
   },
 
@@ -1218,6 +1220,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 17, fontWeight: '900', color: '#111827', fontFamily: appTheme.fontFamily },
   modalSub: { marginTop: 2, fontSize: 12, color: '#6B7280', fontWeight: '600', fontFamily: appTheme.fontFamily },
+  suspensionAdminHint: { color: '#7F1D1D', backgroundColor: '#FEE2E2', borderRadius: 8, padding: 10, fontSize: 13, lineHeight: 19, fontFamily: appTheme.fontFamily },
   modalClose: {
     width: 34,
     height: 34,
@@ -1338,15 +1341,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 14,
+    width: '100%',
   },
   actionsBtn: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     backgroundColor: '#FFF7ED',
-    paddingVertical: 13,
+    paddingVertical: 11,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#FFD3A7',
@@ -1354,7 +1359,7 @@ const styles = StyleSheet.create({
   actionsBtnText: {
     color: ZORA_ORANGE,
     fontWeight: '800',
-    fontSize: 13,
+    fontSize: 11.5,
     fontFamily: appTheme.fontFamily,
   },
 

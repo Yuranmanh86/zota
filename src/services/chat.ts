@@ -115,12 +115,28 @@ export async function getContacts() {
     const session = (sessionRes as any)?.data?.session ?? (sessionRes as any)?.session ?? null;
     const authUserId = session?.user?.id ?? null;
 
-    let query = backend.from('user_profiles').select('id,full_name,phone_number').order('full_name', { ascending: true });
+    let query: any = backend
+      .from('user_profiles')
+      .select('id,full_name,phone_number')
+      .order('full_name', { ascending: true });
     if (authUserId) {
       query = query.neq('auth_user_id', authUserId);
     }
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+
+    if (error) {
+      let legacyQuery: any = backend
+        .from('user_profiles')
+        .select('id,nome_completo,telefone')
+        .order('nome_completo', { ascending: true });
+      if (authUserId) {
+        legacyQuery = legacyQuery.neq('auth_user_id', authUserId);
+      }
+      const legacyResult = await legacyQuery;
+      data = legacyResult.data;
+      error = legacyResult.error;
+    }
 
     if (error) throw error;
 
@@ -144,6 +160,23 @@ export async function joinChatThread(threadId: string, profileId: string) {
   } catch (error: any) {
     return { error: error.message };
   }
+}
+
+export type ChatRestriction = {
+  suspended: boolean;
+  suspended_until: string | null;
+  reason: string | null;
+};
+
+export async function getChatRestriction(): Promise<ChatRestriction> {
+  const response: any = await backend.rpc('get_my_chat_restriction');
+  if (response?.error) throw response.error;
+  const result = Array.isArray(response?.data) ? response.data[0] : (response?.data ?? {});
+  return {
+    suspended: Boolean(result.suspended),
+    suspended_until: result.suspended_until ?? null,
+    reason: result.reason ?? null,
+  };
 }
 
 export async function ensureThreadMembership(threadId: string, profileId: string) {

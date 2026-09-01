@@ -1,14 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, SectionList, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, SectionList, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppStore } from '../store/appStore';
-import { getUserProfile } from '../services/auth';
+import { getUserProfile, SUPPORT_THREAD_ID, ALL_ZORA_GROUP_IDS, ZORA_SYSTEM_PROFILE_ID } from '../services/auth';
 import { backend } from '../services/backendClient';
 import { getContacts, joinChatThread, getOrCreatePrivateChat, getLastReadAll, setLastRead, getLastRead } from '../services/chat';
 import { shadow } from '../theme/appTheme';
-import { SUPPORT_THREAD_ID, ALL_ZORA_GROUP_IDS } from '../services/auth';
 
 const WA_GREEN = '#25D366';
 const WA_GREEN_DARK = '#128C7E';
@@ -53,13 +52,13 @@ const threadColor = (title: string) => {
 };
 
 function sortConversationsByActivity<T extends { unread?: number; lastMessageAt?: string; name?: string; nome_completo?: string }>(a: T, b: T) {
-  const aUnread = Number(a.unread ?? 0);
-  const bUnread = Number(b.unread ?? 0);
-  if (aUnread !== bUnread) return bUnread - aUnread;
-
   const aTime = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
   const bTime = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
   if (aTime !== bTime) return bTime - aTime;
+
+  const aUnread = Number(a.unread ?? 0);
+  const bUnread = Number(b.unread ?? 0);
+  if (aUnread !== bUnread) return bUnread - aUnread;
 
   const aName = String((a as any).nome_completo || (a as any).name || '').toLowerCase();
   const bName = String((b as any).nome_completo || (b as any).name || '').toLowerCase();
@@ -95,7 +94,41 @@ type ProfileContact = {
   full_name?: string;
   telefone: string;
   phone_number?: string;
+  is_support?: boolean;
 };
+
+type SupportUserMap = Record<string, { is_support: boolean; display_name?: string }>;
+
+const SUPPORT_DISPLAY_NAME = 'SUPORTE ZORA';
+
+function isSupportProfileId(id: string): boolean {
+  return id === ZORA_SYSTEM_PROFILE_ID;
+}
+
+async function loadSupportStatusFromDB(profileIds: string[]): Promise<SupportUserMap> {
+  const map: SupportUserMap = {};
+  if (!profileIds.length) return map;
+  try {
+    const res: any = await backend
+      .from('user_profiles')
+      .select('id,is_support_user,full_name')
+      .in('id', profileIds);
+    if (!res?.error && Array.isArray(res?.data)) {
+      res.data.forEach((row: any) => {
+        map[row.id] = {
+          is_support: Boolean(row.is_support_user) || isSupportProfileId(row.id),
+          display_name: row.is_support_user ? SUPPORT_DISPLAY_NAME : undefined,
+        };
+      });
+    }
+  } catch {}
+  profileIds.forEach((id) => {
+    if (!map[id] && isSupportProfileId(id)) {
+      map[id] = { is_support: true, display_name: SUPPORT_DISPLAY_NAME };
+    }
+  });
+  return map;
+}
 
 type PrivateChat = {
   threadId: string;
@@ -105,6 +138,7 @@ type PrivateChat = {
   preview: string;
   timestamp: string;
   verified: boolean;
+  is_support?: boolean;
   lastMessageAt?: string;
   messageCount?: number;
   unread: number;
@@ -142,6 +176,7 @@ export function ChatScreen() {
   const [groupThreads, setGroupThreads] = useState<Conversation[]>([]);
   const [joinedThreads, setJoinedThreads] = useState<string[]>([]);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [isChatAdmin, setIsChatAdmin] = useState(false);
   const [memberCounts, setMemberCounts] = useState<Record<string, number>>({
     [SUPPORT_THREAD_ID]: 50,
     '00000000-0000-0000-0000-000000000002': 50,
@@ -155,7 +190,29 @@ export function ChatScreen() {
   const groupThreadsRef = useRef<Conversation[]>([]);
   const profileCacheRef = useRef<{ profileId: string } | null>(null);
 
-  const normalizeProfile = (p: any): ProfileContact | null => {
+  const [supportUserMap, setSupportUserMap] = useState<SupportUserMap>({});
+  const supportUserMapRef = useRef<SupportUserMap>({});
+
+  useEffect(() => {
+    supportUserMapRef.current = supportUserMap;
+  }, [supportUserMap]);
+
+  const applySupportOverride = (profile: { id: string; nome_completo: string }, supMap?: SupportUserMap) => {
+    const map = supMap ?? supportUserMapRef.current;
+    const entry = map[profile.id];
+    if (entry?.is_support && entry?.display_name) {
+      return { ...profile, nome_completo: entry.display_name, is_support: true as const };
+    }
+    if (entry?.is_support) {
+      return { ...profile, is_support: true as const };
+    }
+    if (isSupportProfileId(profile.id)) {
+      return { ...profile, nome_completo: SUPPORT_DISPLAY_NAME, is_support: true as const };
+    }
+    return profile;
+  };
+
+  const normalizeProfile = (p: any, supMap?: SupportUserMap): ProfileContact | null => {
     if (!p) return null;
     const profile = Array.isArray(p) ? p[0] : p;
     if (!profile || !profile.id) return null;
@@ -171,11 +228,13 @@ export function ChatScreen() {
       /^\d+$/.test(nome);
     const hasValidPhone = cleanPhone.length >= 8;
     const hasValidName = !isNameGeneric && nome.length >= 2;
-    if (!hasValidPhone && !hasValidName) return null;
     let finalName = nome;
     if (!hasValidName && hasValidPhone) {
       const digits = cleanPhone.slice(-9);
       finalName = `+${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5, 7)} ${digits.slice(7)}`;
+    }
+    if (!hasValidName && !hasValidPhone) {
+      finalName = 'Contacto';
     }
     let finalPhone = phone;
     if (!hasValidPhone) {
@@ -185,13 +244,15 @@ export function ChatScreen() {
       if (digits.length === 9) finalPhone = `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
       else if (digits.length === 12) finalPhone = `+${digits.slice(0, 3)} ${digits.slice(3, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
     }
-    return {
+    const base: ProfileContact = {
       id: profile.id,
       nome_completo: finalName,
       full_name: profile.full_name,
       telefone: finalPhone,
       phone_number: profile.phone_number,
     };
+    const overridden = applySupportOverride(base, supMap);
+    return { ...base, ...overridden };
   };
 
   const normalizePhone = (phone: string) => {
@@ -211,18 +272,42 @@ export function ChatScreen() {
 
       if (error || !members?.length) return null;
 
-      const otherMemberIds = Array.from(new Set(
+      let otherMemberIds = Array.from(new Set(
         (members || [])
           .map((m: any) => m.profile_id)
           .filter((id: string | null | undefined) => Boolean(id) && id !== currentProfileId)
       ));
 
+      if (otherMemberIds.length === 0) {
+        const messageSenders: any = await backend
+          .from('chat_messages')
+          .select('sender_profile_id')
+          .eq('chat_thread_id', threadId)
+          .neq('sender_profile_id', currentProfileId)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        otherMemberIds = Array.from(new Set(
+          (messageSenders?.data ?? [])
+            .map((message: any) => message.sender_profile_id)
+            .filter(Boolean)
+        ));
+      }
+
       if (otherMemberIds.length === 0) return null;
 
-      const { data: profiles, error: profilesError } = await backend
+      let { data: profiles, error: profilesError } = await backend
         .from('user_profiles')
         .select('id,full_name,phone_number')
         .in('id', otherMemberIds);
+
+      if (profilesError) {
+        const legacyProfiles = await backend
+          .from('user_profiles')
+          .select('id,nome_completo,telefone')
+          .in('id', otherMemberIds);
+        profiles = legacyProfiles.data as any;
+        profilesError = legacyProfiles.error;
+      }
 
       if (profilesError || !profiles?.length) return null;
 
@@ -260,6 +345,18 @@ export function ChatScreen() {
       setLoading(true);
       try {
         const currentProfileId = await getOrLoadProfileFast();
+
+        const chatAdminRes: any = await backend
+          .from('user_profiles')
+          .select('is_chat_admin')
+          .eq('id', currentProfileId)
+          .maybeSingle();
+        let chatAdmin = Boolean(chatAdminRes?.data?.is_chat_admin);
+        if (!chatAdmin) {
+          const chatAdminRpc: any = await backend.rpc('is_current_chat_admin');
+          chatAdmin = Boolean(chatAdminRpc?.data);
+        }
+        setIsChatAdmin(chatAdmin);
 
         const [membershipsRes, groupsRes, lastReadMap] = await Promise.all([
           backend.from('chat_thread_members').select('chat_thread_id').eq('profile_id', currentProfileId),
@@ -367,10 +464,6 @@ export function ChatScreen() {
                 : Promise.resolve({ data: [], error: null }),
             ]);
             const profilesData = (contactsRes as any)?.data || [];
-            const normalizedContacts = (profilesData)
-              .map((p: any) => normalizeProfile(p))
-              .filter((c: ProfileContact | null): c is ProfileContact => c !== null && c.id !== currentProfileId);
-            setAllContacts(normalizedContacts);
 
             const membersRes: any = privateThreadIds.length > 0
               ? await backend
@@ -379,7 +472,6 @@ export function ChatScreen() {
                   .in('chat_thread_id', privateThreadIds)
               : { data: [], error: null };
 
-            const memberByThread = new Map<string, ProfileContact>();
             const memberRows = (membersRes?.data ?? []) as Array<{ chat_thread_id: string; profile_id: string }>;
             const contactIdsToLoad = Array.from(new Set(
               memberRows
@@ -387,15 +479,39 @@ export function ChatScreen() {
                 .filter((id) => Boolean(id) && id !== currentProfileId)
             ));
 
+            const allProfileIdsForSupport = Array.from(new Set([
+              ...(profilesData.map((p: any) => p.id).filter(Boolean)),
+              ...contactIdsToLoad,
+            ])).filter((id) => id !== currentProfileId);
+
+            const supMap = allProfileIdsForSupport.length > 0
+              ? await loadSupportStatusFromDB(allProfileIdsForSupport)
+              : {};
+            setSupportUserMap((prev) => ({ ...prev, ...supMap }));
+
+            const normalizedContacts = (profilesData)
+              .map((p: any) => normalizeProfile(p, supMap))
+              .filter((c: ProfileContact | null): c is ProfileContact => c !== null && c.id !== currentProfileId);
+            setAllContacts(normalizedContacts);
+
+            const memberByThread = new Map<string, ProfileContact>();
+
             if (contactIdsToLoad.length > 0) {
-              const profilesRes: any = await backend
+              let profilesRes: any = await backend
                 .from('user_profiles')
                 .select('id,full_name,phone_number')
                 .in('id', contactIdsToLoad);
 
+              if (profilesRes?.error) {
+                profilesRes = await backend
+                  .from('user_profiles')
+                  .select('id,nome_completo,telefone')
+                  .in('id', contactIdsToLoad);
+              }
+
               const profilesById = new Map<string, ProfileContact>();
               (profilesRes?.data ?? []).forEach((profile: any) => {
-                const normalized = normalizeProfile(profile);
+                const normalized = normalizeProfile(profile, supMap);
                 if (normalized) profilesById.set(normalized.id, normalized);
               });
 
@@ -410,7 +526,16 @@ export function ChatScreen() {
             }
 
             const privateChatsList = await Promise.all(((privateThreads as any).data ?? []).map(async (thread: any) => {
-              const contact = memberByThread.get(thread.id) || await getPrivateThreadContact(thread.id, currentProfileId);
+              let contact = memberByThread.get(thread.id);
+              if (!contact) {
+                const rawContact = await getPrivateThreadContact(thread.id, currentProfileId);
+                if (rawContact) {
+                  const withSupport = applySupportOverride(rawContact, supMap);
+                  contact = withSupport as ProfileContact;
+                }
+              }
+              const contactId = contact?.id ?? '';
+              const isSupportUser = contact?.is_support || (contactId && (supMap[contactId]?.is_support || isSupportProfileId(contactId)));
               const summary = summaries[thread.id];
               const latestContent = summary?.latest?.content;
               const latestPreview = latestContent ? `${latestContent.slice(0, 40)}${latestContent.length > 40 ? '…' : ''}` : threadPreview(contact?.nome_completo || 'Conversa privada', 'private');
@@ -418,12 +543,13 @@ export function ChatScreen() {
               const unreadCount = Math.min(summary?.unreadCount ?? 0, 99);
               return {
                 threadId: thread.id,
-                contactId: contact?.id ?? '',
-                nome_completo: contact?.nome_completo ?? 'Contato',
+                contactId,
+                nome_completo: isSupportUser && contact ? (supMap[contactId]?.display_name || SUPPORT_DISPLAY_NAME) : (contact?.nome_completo ?? 'Contato'),
                 telefone: contact?.telefone ?? '',
                 preview: latestPreview,
                 timestamp: formatChatTime(summary?.latest?.created_at || thread.created_at),
-                verified: false,
+                verified: isSupportUser || Boolean(thread.is_verified),
+                is_support: isSupportUser,
                 lastMessageAt: summary?.latest?.created_at,
                 messageCount: summary?.count ?? 0,
                 unread: unreadCount,
@@ -545,11 +671,7 @@ export function ChatScreen() {
                         unread: 1,
                         isMine: false,
                       };
-                      return [novo, ...cur2].sort((a: any, b: any) => {
-                        const aT = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
-                        const bT = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
-                        return bT - aT;
-                      });
+                      return [...cur2, novo].sort((a, b) => sortConversationsByActivity(a, b));
                     });
                     setJoinedThreads((jt) => Array.from(new Set([...jt, threadId])));
                   } catch {}
@@ -793,7 +915,7 @@ export function ChatScreen() {
     navigation.navigate('ChatDetail', {
       threadId: chat.threadId,
       recipient: chat.nome_completo,
-      verified: false,
+      verified: chat.verified || chat.is_support || false,
       isPrivate: true,
       contactPhone: chat.telefone,
     });
@@ -811,10 +933,11 @@ export function ChatScreen() {
     if (!res.data) { setError('Não foi possível iniciar a conversa privada.'); return; }
     setJoinedThreads((prev) => Array.from(new Set([...prev, res.data as string])));
     markThreadAsRead(res.data, undefined);
+    const isSupport = contact.is_support || isSupportProfileId(contact.id);
     navigation.navigate('ChatDetail', {
       threadId: res.data,
-      recipient: contact.nome_completo,
-      verified: false,
+      recipient: isSupport ? SUPPORT_DISPLAY_NAME : contact.nome_completo,
+      verified: isSupport,
       isPrivate: true,
       contactPhone: contact.telefone,
     });
@@ -839,7 +962,21 @@ export function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header} />
+      <View style={styles.header}>
+        <View style={styles.headerTitleRow}>
+          <Text style={styles.headerTitle}>Bate-Papo</Text>
+        </View>
+        {isChatAdmin ? (
+          <TouchableOpacity
+            style={styles.chatAdminButton}
+            onPress={() => navigation.navigate('ChatAdmin')}
+            accessibilityLabel="Abrir moderação do chat"
+          >
+            <Ionicons name="shield-outline" size={18} color="#FFF" />
+            <Text style={styles.chatAdminButtonText}>Moderar</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
 
       {/* ===== ABA MENU ESTILO WHATSAPP ===== */}
       <View style={styles.tabsHeader}>
@@ -891,8 +1028,15 @@ export function ChatScreen() {
 
       <ScrollView
         contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={true}
         style={{ flex: 1 }}
+        bounces={true}
+        alwaysBounceVertical={false}
+        scrollEventThrottle={16}
+        overScrollMode="auto"
+        nestedScrollEnabled={true}
+        keyboardShouldPersistTaps="handled"
+        pointerEvents="auto"
       >
         {error ? (
           <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>
@@ -918,36 +1062,41 @@ export function ChatScreen() {
                 <Text style={styles.emptyText}>Nenhum contato encontrado.</Text>
               </View>
             ) : (
-              <SectionList
-                sections={contactSections}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-                stickySectionHeadersEnabled={false}
-                renderSectionHeader={({ section: { title } }) => (
+              contactSections.map((section) => (
+                <View key={section.title}>
                   <View style={styles.alphaHeader}>
-                    <Text style={styles.alphaHeaderText}>{title}</Text>
+                    <Text style={styles.alphaHeaderText}>{section.title}</Text>
                   </View>
-                )}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.contactItem}
-                    onPress={() => handleOpenPrivateChat(item)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.avatar, { backgroundColor: pickColor(item.id) }]}>
-                      <Text style={styles.avatarText}>{(item.nome_completo || 'C').charAt(0).toUpperCase()}</Text>
-                    </View>
-                    <View style={styles.chatBody}>
-                      <Text style={styles.contactName} numberOfLines={1}>{item.nome_completo}</Text>
-                      <View style={styles.contactPhoneRow}>
-                        <Ionicons name="call-outline" size={12} color="#667781" style={{ marginRight: 5 }} />
-                        <Text style={styles.contactPhone}>{normalizePhone(item.telefone) || 'Sem número'}</Text>
-                      </View>
-                    </View>
-                    <Ionicons name="chatbubble-outline" size={22} color={WA_GREEN} />
-                  </TouchableOpacity>
-                )}
-              />
+                  {section.data.map((item) => {
+                    const isSupport = item.is_support || isSupportProfileId(item.id);
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.contactItem}
+                        onPress={() => handleOpenPrivateChat(item)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.avatar, { backgroundColor: isSupport ? '#0EA5E9' : pickColor(item.id) }]}>
+                          <Text style={styles.avatarText}>{(item.nome_completo || 'C').charAt(0).toUpperCase()}</Text>
+                        </View>
+                        <View style={styles.chatBody}>
+                          <View style={styles.chatNameRow}>
+                            <Text style={styles.contactName} numberOfLines={1}>{item.nome_completo}</Text>
+                            {isSupport ? (
+                              <Ionicons name="shield-checkmark" size={14} color={WA_GREEN} style={{ marginLeft: 4, flexShrink: 0 }} />
+                            ) : null}
+                          </View>
+                          <View style={styles.contactPhoneRow}>
+                            <Ionicons name="call-outline" size={12} color="#667781" style={{ marginRight: 5, flexShrink: 0 }} />
+                            <Text style={styles.contactPhone} numberOfLines={1}>{normalizePhone(item.telefone) || 'Sem número'}</Text>
+                          </View>
+                        </View>
+                        <Ionicons name="chatbubble-outline" size={22} color={WA_GREEN} style={{ flexShrink: 0 }} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))
             )}
           </View>
         ) : (
@@ -1022,7 +1171,7 @@ export function ChatScreen() {
                     onPress={() => openPrivateChat(item)}
                     activeOpacity={0.7}
                   >
-                    <View style={[styles.avatar, { backgroundColor: pickColor(item.id) }]}>
+                    <View style={[styles.avatar, { backgroundColor: item.is_support ? '#0EA5E9' : pickColor(item.id) }]}>
                       <Text style={styles.avatarText}>{(item.nome_completo || 'C').charAt(0).toUpperCase()}</Text>
                     </View>
                     <View style={styles.chatBody}>
@@ -1031,6 +1180,9 @@ export function ChatScreen() {
                           <Text style={[styles.chatName, item.unread > 0 && styles.chatNameBold]} numberOfLines={1}>
                             {item.nome_completo}
                           </Text>
+                          {item.verified || item.is_support ? (
+                            <Ionicons name="shield-checkmark" size={14} color={WA_GREEN} style={{ marginLeft: 4 }} />
+                          ) : null}
                         </View>
                         <Text style={[styles.chatTime, item.unread > 0 && styles.chatTimeUnread]}>{item.timestamp}</Text>
                       </View>
@@ -1078,7 +1230,7 @@ export function ChatScreen() {
                     onPress={() => openPrivateChat(chat)}
                     activeOpacity={0.7}
                   >
-                    <View style={[styles.avatar, { backgroundColor: pickColor(chat.threadId) }]}>
+                    <View style={[styles.avatar, { backgroundColor: chat.is_support ? '#0EA5E9' : pickColor(chat.threadId) }]}>
                       <Text style={styles.avatarText}>{(chat.nome_completo || 'C').charAt(0).toUpperCase()}</Text>
                     </View>
                     <View style={styles.chatBody}>
@@ -1087,6 +1239,9 @@ export function ChatScreen() {
                           <Text style={[styles.chatName, chat.unread > 0 && styles.chatNameBold]} numberOfLines={1}>
                             {chat.nome_completo}
                           </Text>
+                          {chat.verified || chat.is_support ? (
+                            <Ionicons name="shield-checkmark" size={14} color={WA_GREEN} style={{ marginLeft: 4 }} />
+                          ) : null}
                         </View>
                         <Text style={[styles.chatTime, chat.unread > 0 && styles.chatTimeUnread]}>{chat.timestamp}</Text>
                       </View>
@@ -1197,9 +1352,22 @@ export function ChatScreen() {
   );
 }
 
+const WEB_STYLES_CONTAINER = Platform.select<any>({
+  web: {
+    minHeight: '100vh' as any,
+    height: '100vh' as any,
+    overflow: 'hidden' as any,
+  },
+  default: {},
+});
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFF' },
-  content: { paddingBottom: 200 },
+  container: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    ...WEB_STYLES_CONTAINER,
+  } as any,
+  content: { paddingBottom: 220, flexGrow: 1 },
 
   header: {
     backgroundColor: WA_GREEN_DARK,
@@ -1210,10 +1378,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerTitleRow: { flex: 1 },
+  headerTitleRow: { flex: 1, minWidth: 0, flexShrink: 1 },
   headerTitle: { color: '#FFF', fontSize: 22, fontWeight: '800', letterSpacing: 0.2 },
+  chatAdminButton: { minWidth: 86, height: 40, paddingHorizontal: 10, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.16)' },
+  chatAdminButtonText: { color: '#FFF', fontSize: 11, fontWeight: '800' },
 
-  // ======== TABS WHATSAPP ========
   tabsHeader: {
     backgroundColor: WA_GREEN_DARK,
     flexDirection: 'row',
@@ -1233,12 +1402,14 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
     marginHorizontal: 2,
+    minWidth: 0,
   },
   tabBtnActive: { backgroundColor: 'transparent' },
   tabText: {
     color: 'rgba(255,255,255,0.75)',
     fontSize: 13,
     fontWeight: '700',
+    flexShrink: 1,
   },
   tabTextActive: { color: '#FFF', fontWeight: '800' },
   tabBadge: {
@@ -1250,6 +1421,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   tabBadgeActive: { backgroundColor: '#FFF' },
   tabBadgeText: { color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '800' },
@@ -1274,7 +1446,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  searchInput: { flex: 1, fontSize: 14, color: '#111B21', padding: 0 },
+  searchInput: { flex: 1, fontSize: 14, color: '#111B21', padding: 0, minWidth: 0 },
 
   sectionHeaderWA: {
     flexDirection: 'row',
@@ -1284,9 +1456,9 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
-  sectionTitleWA: { color: WA_GREEN_DARK, fontSize: 13, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  sectionTitleWA: { color: WA_GREEN_DARK, fontSize: 13, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 1 },
   sectionSubtitle: { color: '#8696A0', fontSize: 12, fontWeight: '500', marginTop: 1 },
-  sectionCount: { color: '#8696A0', fontSize: 12, fontWeight: '700' },
+  sectionCount: { color: '#8696A0', fontSize: 12, fontWeight: '700', flexShrink: 0, marginLeft: 8 },
 
   alphaHeader: {
     backgroundColor: '#F0F2F5',
@@ -1321,22 +1493,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
+    flexShrink: 0,
   },
   avatarGroup: { borderRadius: 22 },
   avatarText: { color: '#FFF', fontSize: 18, fontWeight: '800' },
-  chatBody: { flex: 1, justifyContent: 'center' },
+  chatBody: { flex: 1, justifyContent: 'center', minWidth: 0, flexShrink: 1 },
   chatTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  chatNameRow: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
-  chatName: { fontSize: 16, color: '#111B21', fontWeight: '500' },
-  contactName: { fontSize: 16, color: '#111B21', fontWeight: '600' },
-  contactPhoneRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
-  contactPhone: { color: '#667781', fontSize: 13 },
+  chatNameRow: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8, minWidth: 0, flexShrink: 1 },
+  chatName: { fontSize: 16, color: '#111B21', fontWeight: '500', flexShrink: 1, minWidth: 0 },
+  contactName: { fontSize: 16, color: '#111B21', fontWeight: '600', flexShrink: 1, minWidth: 0 },
+  contactPhoneRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, minWidth: 0, flexShrink: 1 },
+  contactPhone: { color: '#667781', fontSize: 13, flexShrink: 1, minWidth: 0 },
   chatNameBold: { fontWeight: '800' },
-  chatTime: { fontSize: 12, color: '#667781' },
+  chatTime: { fontSize: 12, color: '#667781', flexShrink: 0, marginLeft: 8 },
   chatTimeUnread: { color: WA_GREEN, fontWeight: '700' },
-  chatPreviewRow: { flexDirection: 'row', alignItems: 'center' },
-  groupMetaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 7 },
-  chatPreview: { fontSize: 14, color: '#667781', flex: 1 },
+  chatPreviewRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0, flexShrink: 1 },
+  groupMetaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 7, flexWrap: 'wrap' },
+  chatPreview: { fontSize: 14, color: '#667781', flex: 1, flexShrink: 1, minWidth: 0 },
   chatPreviewBold: { color: '#111B21', fontWeight: '600' },
   contactPhoneMiniRow: {
     flexDirection: 'row',

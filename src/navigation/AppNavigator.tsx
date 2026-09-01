@@ -26,6 +26,7 @@ import { AdminDashboardScreen } from '../screens/AdminDashboardScreen';
 import { AdminUsersScreen } from '../screens/AdminUsersScreen';
 import { AdminDepositsScreen } from '../screens/AdminDepositsScreen';
 import { AdminWithdrawalsScreen } from '../screens/AdminWithdrawalsScreen';
+import { ChatAdminScreen } from '../screens/ChatAdminScreen';
 import { SplashScreen } from '../screens/SplashScreen';
 import { backend } from '../services/backendClient';
 import { useAppStore } from '../store/appStore';
@@ -347,6 +348,7 @@ export function AppNavigator() {
           <Stack.Screen name="Support" component={SupportScreen} />
           <Stack.Screen name="Chat" component={ChatScreen} />
           <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+          <Stack.Screen name="ChatAdmin" component={ChatAdminScreen} />
           <Stack.Screen name="Reload" component={ReloadScreen} />
           <Stack.Screen name="Withdraw" component={WithdrawScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />

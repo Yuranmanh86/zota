@@ -41,6 +41,8 @@ export type AdminUserRow = {
   active_investments: number;
   savings_count: number;
   total_savings_applied: number;
+  suspended_until: string | null;
+  suspension_reason: string | null;
 };
 
 export type DepositRow = {
@@ -146,7 +148,7 @@ export async function getAdminUsers(
   const rpcRes: any = await backend.rpc('admin_list_users', params);
   if (rpcRes?.error) throw rpcRes.error;
   const rows: any[] = Array.isArray(rpcRes?.data) ? rpcRes.data : [];
-  return rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     id: String(r.id ?? ''),
     full_name: String(r.full_name ?? ''),
     phone_number: String(r.phone_number ?? ''),
@@ -167,7 +169,54 @@ export async function getAdminUsers(
     active_investments: Number(r.active_investments ?? 0),
     savings_count: Number(r.savings_count ?? 0),
     total_savings_applied: Number(r.total_savings_applied ?? 0),
+    suspended_until: r.suspended_until ?? null,
+    suspension_reason: r.suspension_reason ?? null,
   }));
+  if (mapped.length > 0) {
+    const profilesRes: any = await backend
+      .from('user_profiles')
+      .select('id,suspended_until,suspension_reason')
+      .in('id', mapped.map((user) => user.id));
+    if (!profilesRes?.error) {
+      const suspensionById = new Map((profilesRes.data ?? []).map((profile: any) => [String(profile.id), profile]));
+      mapped.forEach((user) => {
+        const suspension = suspensionById.get(user.id) as any;
+        if (suspension) {
+          user.suspended_until = suspension.suspended_until ?? null;
+          user.suspension_reason = suspension.suspension_reason ?? null;
+        }
+      });
+    }
+  }
+  return mapped;
+}
+
+export async function adminSuspendUser(
+  profileId: string,
+  hours = 4,
+  reason = 'Por motivos de conteúdo que viola as políticas do Zora.'
+): Promise<ActionResult> {
+  const rpcRes: any = await backend.rpc('admin_suspend_user', {
+    p_profile_id: profileId,
+    p_hours: hours,
+    p_reason: reason,
+  });
+  if (rpcRes?.error) return { success: false, message: rpcRes.error.message || 'Não foi possível suspender.' };
+  const result = Array.isArray(rpcRes?.data) ? rpcRes.data[0] : (rpcRes?.data ?? {});
+  return {
+    success: Boolean(result.success),
+    message: String(result.message ?? 'Operação concluída.'),
+  };
+}
+
+export async function adminUnsuspendUser(profileId: string): Promise<ActionResult> {
+  const rpcRes: any = await backend.rpc('admin_unsuspend_user', { p_profile_id: profileId });
+  if (rpcRes?.error) return { success: false, message: rpcRes.error.message || 'Não foi possível reativar.' };
+  const result = Array.isArray(rpcRes?.data) ? rpcRes.data[0] : (rpcRes?.data ?? {});
+  return {
+    success: Boolean(result.success),
+    message: String(result.message ?? 'Operação concluída.'),
+  };
 }
 
 async function enrichWithProfiles<T extends { profile_id: string }>(

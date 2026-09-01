@@ -9,6 +9,9 @@ dist/
 web-build/
 expo-env.d.ts
 
+# APK release is kept outside the web source repository
+/public/downloads/*.apk
+
 # Native
 .kotlin/
 *.orig.*

@@ -1,13 +1,53 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, RefreshControl, View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Share, Alert, Keyboard } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { getUserProfile } from '../services/auth';
+import { getUserProfile, ZORA_SYSTEM_PROFILE_ID } from '../services/auth';
 import { backend } from '../services/backendClient';
-import { sendChatMessage, ensureThreadMembership, getChatMessagesPage, getOrCreatePrivateChat } from '../services/chat';
+import { sendChatMessage, ensureThreadMembership, getChatMessagesPage, getOrCreatePrivateChat, getChatRestriction } from '../services/chat';
 import { shadow } from '../theme/appTheme';
+
+const SUPPORT_DISPLAY_NAME = 'SUPORTE ZORA';
+
+function isSupportProfileId(id: string): boolean {
+  return id === ZORA_SYSTEM_PROFILE_ID;
+}
+
+type SupportUserMap = Record<string, { is_support: boolean; display_name?: string }>;
+
+async function loadSupportStatusFromDB(profileIds: string[]): Promise<SupportUserMap> {
+  const map: SupportUserMap = {};
+  if (!profileIds.length) return map;
+  const uniqueIds = Array.from(new Set(profileIds.filter(Boolean)));
+  if (!uniqueIds.length) return map;
+  try {
+    const res: any = await backend
+      .from('user_profiles')
+      .select('id,is_support_user,full_name')
+      .in('id', uniqueIds);
+    if (!res?.error && Array.isArray(res?.data)) {
+      res.data.forEach((row: any) => {
+        const supFlag = Boolean(row.is_support_user);
+        const sysFlag = isSupportProfileId(row.id);
+        const isSup = supFlag || sysFlag;
+        if (isSup) {
+          map[row.id] = {
+            is_support: true,
+            display_name: SUPPORT_DISPLAY_NAME,
+          };
+        }
+      });
+    }
+  } catch {}
+  uniqueIds.forEach((id) => {
+    if (!map[id] && isSupportProfileId(id)) {
+      map[id] = { is_support: true, display_name: SUPPORT_DISPLAY_NAME };
+    }
+  });
+  return map;
+}
 
 const WA_GREEN = '#25D366';
 const WA_GREEN_DARK = '#128C7E';
@@ -61,6 +101,7 @@ type ChatMessage = {
   senderColor?: string;
   senderProfileId?: string;
   senderPhone?: string;
+  senderIsSupport?: boolean;
   status: 'sent' | 'delivered' | 'read' | 'sending';
 };
 
@@ -111,12 +152,23 @@ function formatPhoneRaw(phone: string): string {
   return phone || '';
 }
 
-function resolveSenderIdentity(profile: any): { name: string; phone: string } {
-  if (!profile) return { name: 'Zora', phone: '' };
+function resolveSenderIdentity(profile: any, supMap?: SupportUserMap): { name: string; phone: string; is_support: boolean } {
+  if (!profile) return { name: 'Zora', phone: '', is_support: false };
+  const pid = String(profile.id || '');
+  const supportEntry = supMap?.[pid];
+  const directSup = Boolean(supportEntry?.is_support) || Boolean(profile.is_support_user);
+  const systemSup = isSupportProfileId(pid);
+  const is_support = directSup || systemSup;
+
   const rawName = String(profile.full_name || profile.nome_completo || '').trim();
   const rawPhone = String(profile.phone_number || profile.telefone || '').trim();
   const digits = rawPhone.replace(/\D/g, '');
-  const phone = formatPhoneRaw(rawPhone);
+  const phone = formatPhoneRaw(rawPhone) || (is_support ? 'Equipa oficial' : '');
+
+  if (is_support) {
+    return { name: SUPPORT_DISPLAY_NAME, phone, is_support: true };
+  }
+
   const isNameGeneric =
     !rawName ||
     /^(contacto|contactos|contato|contatos|usuário|usuario|user|users|cliente|clientes|anonymous|anonimo|convidado|guest)$/i.test(rawName) ||
@@ -131,14 +183,14 @@ function resolveSenderIdentity(profile: any): { name: string; phone: string } {
       finalName = 'Zora';
     }
   }
-  return { name: finalName, phone };
+  return { name: finalName, phone, is_support: false };
 }
 
 async function loadSenderProfiles(senderIds: string[]): Promise<any[]> {
   if (senderIds.length === 0) return [];
   const currentQuery = await backend
     .from('user_profiles')
-    .select('id,full_name,phone_number')
+    .select('id,full_name,phone_number,is_support_user')
     .in('id', senderIds);
   if (!currentQuery.error) return currentQuery.data || [];
 
@@ -153,8 +205,8 @@ export function ChatDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const params = route.params as RouteParams;
-  const recipient = params?.recipient || 'Contato';
-  const verified = params?.verified ?? false;
+  const paramsRecipient = params?.recipient || 'Contato';
+  const paramsVerified = params?.verified ?? false;
   const isGroup = params?.isGroup ?? false;
   const threadId = params?.threadId;
   const contactPhone = params?.contactPhone;
@@ -165,7 +217,9 @@ export function ChatDetailScreen() {
   const OLDER_PAGE_SIZE = 20;
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [senderMap, setSenderMap] = useState<Record<string, { name: string; color: string; phone: string }>>({});
+  const [senderMap, setSenderMap] = useState<Record<string, { name: string; color: string; phone: string; is_support: boolean }>>({});
+  const [supportUserMap, setSupportUserMap] = useState<SupportUserMap>({});
+  const supportUserMapRef = useRef<SupportUserMap>({});
   const [refreshing, setRefreshing] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(true);
@@ -181,9 +235,126 @@ export function ChatDetailScreen() {
   const [reply, setReply] = useState<ReplyState>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sessionCached, setSessionCached] = useState<{ authUserId: string; profileId: string } | null>(null);
+  const [chatSuspension, setChatSuspension] = useState<{ until: string; reason: string } | null>(null);
+  const [suspensionNow, setSuspensionNow] = useState(() => Date.now());
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const lastMessageIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    supportUserMapRef.current = supportUserMap;
+  }, [supportUserMap]);
+
+  useEffect(() => {
+    let mounted = true;
+    const refreshRestriction = async () => {
+      try {
+        const restriction = await getChatRestriction();
+        if (!mounted) return;
+        setChatSuspension(restriction.suspended && restriction.suspended_until
+          ? { until: restriction.suspended_until, reason: restriction.reason || 'Por motivos de conteúdo que viola as políticas do Zora.' }
+          : null);
+        setSuspensionNow(Date.now());
+      } catch {}
+    };
+    refreshRestriction();
+    const interval = setInterval(() => {
+      setSuspensionNow(Date.now());
+      refreshRestriction();
+    }, 1000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
+  const suspensionRemaining = chatSuspension ? new Date(chatSuspension.until).getTime() - suspensionNow : 0;
+  const isChatSuspended = suspensionRemaining > 0;
+  const suspensionCountdown = (() => {
+    const totalSeconds = Math.max(0, Math.ceil(suspensionRemaining / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  })();
+
+  const recipient = useMemo(() => {
+    if (isGroup) return paramsRecipient;
+    let isSup = paramsVerified;
+    const candidateIds = Object.keys(supportUserMap).filter((id) => {
+      const entry = supportUserMap[id];
+      return entry?.is_support;
+    });
+    if (candidateIds.length > 0) isSup = true;
+    if (messages.some((m) => m.owner === 'other' && m.senderIsSupport)) isSup = true;
+    return isSup ? SUPPORT_DISPLAY_NAME : paramsRecipient;
+  }, [paramsRecipient, paramsVerified, isGroup, supportUserMap, messages]);
+
+  const verified = useMemo(() => {
+    if (isGroup) return paramsVerified;
+    let isSup = paramsVerified;
+    const candidateIds = Object.keys(supportUserMap).filter((id) => supportUserMap[id]?.is_support);
+    if (candidateIds.length > 0) isSup = true;
+    if (messages.some((m) => m.owner === 'other' && m.senderIsSupport)) isSup = true;
+    return isSup || paramsVerified;
+  }, [paramsVerified, isGroup, supportUserMap, messages]);
+
+  useEffect(() => {
+    const ids: string[] = [];
+    messages.forEach((m) => {
+      if (m.senderProfileId) ids.push(m.senderProfileId);
+    });
+    if (ids.length === 0) return;
+    setMessages((cur) => {
+      let changed = false;
+      const newCur = cur.map((m) => {
+        const sid = m.senderProfileId;
+        if (!sid) return m;
+        const entry = supportUserMap[sid];
+        const isSup = m.senderIsSupport || Boolean(entry?.is_support) || isSupportProfileId(sid);
+        const correctName = isSup ? SUPPORT_DISPLAY_NAME : m.senderName;
+        const needUpdate =
+          (isSup && !m.senderIsSupport) ||
+          (isSup && m.senderName !== SUPPORT_DISPLAY_NAME);
+        if (needUpdate) {
+          changed = true;
+          return { ...m, senderIsSupport: isSup || m.senderIsSupport, senderName: correctName };
+        }
+        return m;
+      });
+      return changed ? newCur : cur;
+    });
+  }, [supportUserMap]);
+
+  const getMsgSupportMeta = (msg: ChatMessage): { is_support: boolean; senderNameResolved: string } => {
+    if (msg.owner === 'me') {
+      return { is_support: false, senderNameResolved: 'Você' };
+    }
+    const sid = msg.senderProfileId;
+    const entry = sid ? supportUserMap[sid] : undefined;
+    const isSup =
+      msg.senderIsSupport ||
+      verified ||
+      Boolean(entry?.is_support) ||
+      isSupportProfileId(sid || '') ||
+      (recipient === SUPPORT_DISPLAY_NAME && !isGroup);
+    const senderResolved = isSup
+      ? SUPPORT_DISPLAY_NAME
+      : (msg.senderName || recipient || 'Zora');
+    return { is_support: isSup, senderNameResolved: senderResolved };
+  };
+
+  const getSenderMetaForRender = (msg: ChatMessage) => {
+    const supMeta = getMsgSupportMeta(msg);
+    if (msg.owner === 'me') return { showHeader: false, label: 'Você', verified: false, phone: '' };
+    const showHeader = (isGroup && msg.senderName) || supMeta.is_support;
+    const label = supMeta.is_support ? SUPPORT_DISPLAY_NAME : (msg.senderName || recipient || 'Zora');
+    const phone = supMeta.is_support ? '' : (msg.senderPhone || '');
+    return {
+      showHeader,
+      label,
+      verified: supMeta.is_support,
+      phone,
+      color: msg.senderColor || WA_GREEN_DARK,
+    };
+  };
 
   useEffect(() => {
     const kShow = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
@@ -221,7 +392,7 @@ export function ChatDetailScreen() {
 
   const loadSenderNamesFast = async (
     rows: any[],
-    existingMap: Record<string, { name: string; color: string; phone: string }>
+    existingMap: Record<string, { name: string; color: string; phone: string; is_support: boolean }>
   ) => {
     const uniqueSenderIds = Array.from(new Set(
       rows
@@ -231,14 +402,19 @@ export function ChatDetailScreen() {
     ));
     if (uniqueSenderIds.length === 0) return existingMap;
     try {
-      const profilesRows = await loadSenderProfiles(uniqueSenderIds);
+      const [profilesRows, supMap] = await Promise.all([
+        loadSenderProfiles(uniqueSenderIds),
+        loadSupportStatusFromDB(uniqueSenderIds),
+      ]);
+      setSupportUserMap((prev) => ({ ...prev, ...supMap }));
       const newMap = { ...existingMap };
       (profilesRows || []).forEach((p: any) => {
-        const identity = resolveSenderIdentity(p);
+        const identity = resolveSenderIdentity(p, { ...supportUserMapRef.current, ...supMap });
         newMap[String(p.id)] = {
           name: identity.name,
           color: senderColor(String(p.id)),
           phone: identity.phone,
+          is_support: identity.is_support,
         };
       });
       return newMap;
@@ -250,12 +426,24 @@ export function ChatDetailScreen() {
   const mapMessagesToChat = (
     rows: any[],
     currentProfileId: string,
-    sMap: Record<string, { name: string; color: string; phone: string }>
+    sMap: Record<string, { name: string; color: string; phone: string; is_support: boolean }>
   ): ChatMessage[] => {
+    const supMap = supportUserMapRef.current;
     return rows.map((item: any) => {
       const isMine = item.sender_profile_id === currentProfileId;
       const senderId = String(item.sender_profile_id || '');
       const s = sMap[senderId];
+      const entry = supMap[senderId];
+      const senderIsSupport = Boolean(s?.is_support) || Boolean(entry?.is_support) || isSupportProfileId(senderId);
+      let senderName: string | undefined;
+      if (!isMine) {
+        senderName = senderIsSupport
+          ? (entry?.display_name || SUPPORT_DISPLAY_NAME)
+          : (s?.name || (isGroup ? 'A carregar...' : recipient));
+      }
+      if (senderIsSupport && !isMine && (entry?.display_name || isSupportProfileId(senderId))) {
+        senderName = entry?.display_name || SUPPORT_DISPLAY_NAME;
+      }
       return {
         id: item.id,
         owner: isMine ? 'me' : 'other',
@@ -264,10 +452,11 @@ export function ChatDetailScreen() {
         uri: item.attachment_url ?? undefined,
         time: formatMessageTime(item.created_at || new Date().toISOString()),
         fullCreatedAt: item.created_at || new Date().toISOString(),
-        senderName: isGroup && !isMine ? s?.name || 'A carregar...' : undefined,
-        senderColor: isGroup ? s?.color || senderColor(senderId) : undefined,
+        senderName,
+        senderColor: s?.color || senderColor(senderId),
         senderProfileId: senderId,
-        senderPhone: isGroup ? s?.phone || '' : undefined,
+        senderPhone: !isMine ? s?.phone || '' : undefined,
+        senderIsSupport: senderIsSupport,
         status: isMine ? 'delivered' : 'read',
       };
     });
@@ -311,7 +500,7 @@ export function ChatDetailScreen() {
       messageRows.forEach((m: any) => {
         const sid = String(m.sender_profile_id || '');
         if (!workingSenderMap[sid] && sid) {
-          workingSenderMap[sid] = { name: sid === currentProfileId ? 'Você' : 'A carregar...', color: senderColor(sid), phone: '' };
+          workingSenderMap[sid] = { name: sid === currentProfileId ? 'Você' : 'A carregar...', color: senderColor(sid), phone: '', is_support: isSupportProfileId(sid) };
         }
       });
 
@@ -354,11 +543,19 @@ export function ChatDetailScreen() {
 
           if (!reset) return;
 
+          const supMapMerged = supportUserMapRef.current;
           setMessages((cur) => cur.map((m) => {
             const sid = m.senderProfileId || '';
             const s = sm[sid];
-            if (!s || !isGroup) return m;
-            return { ...m, senderName: m.owner === 'me' ? undefined : s.name, senderColor: s.color, senderPhone: m.owner === 'me' ? undefined : s.phone };
+            const isSup = (s?.is_support) || Boolean(supMapMerged[sid]?.is_support) || isSupportProfileId(sid);
+            const finalName = isSup && m.owner !== 'me' ? (supMapMerged[sid]?.display_name || (isSupportProfileId(sid) ? SUPPORT_DISPLAY_NAME : s?.name)) : s?.name;
+            return {
+              ...m,
+              senderName: m.owner === 'me' ? undefined : (finalName || m.senderName),
+              senderColor: s?.color || m.senderColor,
+              senderPhone: m.owner === 'me' ? undefined : s?.phone,
+              senderIsSupport: isSup,
+            };
           }));
         } catch {}
       }, 0);
@@ -375,10 +572,13 @@ export function ChatDetailScreen() {
     await loadMessages(false);
   };
 
-  const handleSenderPress = async (senderProfileId: string, senderName: string, senderPhone: string) => {
+  const handleSenderPress = async (senderProfileId: string, senderName: string, senderPhone: string, senderIsSupport?: boolean) => {
     if (!senderProfileId) return;
+    const isSup = senderIsSupport || isSupportProfileId(senderProfileId) || Boolean(supportUserMapRef.current[senderProfileId]?.is_support);
     const title = senderName || 'Zora';
-    const subtitle = senderPhone ? `${senderPhone}` : 'Sem contacto';
+    const subtitle = isSup
+      ? 'Equipa oficial de suporte do Zora'
+      : (senderPhone ? `${senderPhone}` : 'Sem contacto');
     const meProfileId = profileId;
     if (senderProfileId === meProfileId) {
       Alert.alert('O teu perfil', subtitle);
@@ -402,25 +602,27 @@ export function ChatDetailScreen() {
             }
             let otherName = senderName || 'Contato';
             let otherPhone = senderPhone || '';
+            let otherVerified = isSup;
             try {
               const pRes: any = await backend
                 .from('user_profiles')
-                .select('full_name,phone_number')
+                .select('full_name,phone_number,is_support_user')
                 .eq('id', senderProfileId)
                 .maybeSingle();
               if (pRes?.data) {
                 const ident = resolveSenderIdentity(pRes.data);
                 otherName = ident.name;
                 otherPhone = ident.phone;
+                otherVerified = ident.is_support || isSup;
               }
             } catch {}
 
             navigation.navigate('ChatDetail', {
-              recipient: otherName,
+              recipient: otherVerified ? SUPPORT_DISPLAY_NAME : otherName,
               contactPhone: otherPhone,
               threadId: threadIdResult.id ?? threadIdResult,
               isGroup: false,
-              verified: false,
+              verified: otherVerified,
               memberCount: 2,
             } as never);
           } catch (err: any) {
@@ -439,7 +641,10 @@ export function ChatDetailScreen() {
   };
 
   const handleReply = (msg: ChatMessage) => {
-    const sender = msg.owner === 'me' ? 'Você' : (msg.senderName || recipient);
+    const isSup = msg.senderIsSupport || (verified && msg.owner !== 'me');
+    const sender = msg.owner === 'me'
+      ? 'Você'
+      : (isSup ? SUPPORT_DISPLAY_NAME : (msg.senderName || recipient));
     const preview = msg.type === 'photo' ? '📷 Foto' : (msg.text || 'Mensagem');
     setReply({
       messageId: msg.id,
@@ -452,7 +657,10 @@ export function ChatDetailScreen() {
   };
 
   const handleMessageAction = (msg: ChatMessage) => {
-    const sender = msg.owner === 'me' ? 'Enviada por você' : (msg.senderName || `De: ${recipient}`);
+    const isSup = msg.senderIsSupport || (verified && msg.owner !== 'me');
+    const sender = msg.owner === 'me'
+      ? 'Enviada por você'
+      : (msg.senderName || `De: ${recipient}`);
     const isMe = msg.owner === 'me';
     Alert.alert(
       'Opções da mensagem',
@@ -508,22 +716,34 @@ export function ChatDetailScreen() {
     const processNewRows = (rows: any[], cpid: string) => {
       if (!rows.length) return;
       const reversed = rows.slice().reverse();
+      const supMap = supportUserMapRef.current;
       setMessages((cur) => {
         const existingIds = new Set(cur.map((m) => m.id));
         const newOnes: ChatMessage[] = [];
-        let newSenderMap: Record<string, { name: string; color: string; phone: string }> | null = null;
+        let newSenderMap: Record<string, { name: string; color: string; phone: string; is_support: boolean }> | null = null;
 
         reversed.forEach((row: any) => {
           if (!existingIds.has(row.id)) {
             const isMine = row.sender_profile_id === cpid;
             const senderId = String(row.sender_profile_id || '');
+            const entry = supMap[senderId];
+            const senderIsSupport = Boolean(entry?.is_support) || isSupportProfileId(senderId);
             let s = senderMap[senderId];
             if (!s && senderId) {
               if (!newSenderMap) newSenderMap = {};
               if (!newSenderMap[senderId]) {
-                newSenderMap[senderId] = { name: senderId === cpid ? 'Você' : 'A carregar...', color: senderColor(senderId), phone: '' };
+                const senderName = senderIsSupport
+                  ? SUPPORT_DISPLAY_NAME
+                  : (senderId === cpid ? 'Você' : 'A carregar...');
+                newSenderMap[senderId] = { name: senderName, color: senderColor(senderId), phone: senderIsSupport ? 'Equipa oficial' : '', is_support: senderIsSupport };
               }
               s = newSenderMap[senderId];
+            }
+            let finalSenderName: string | undefined;
+            if (!isMine) {
+              finalSenderName = senderIsSupport
+                ? (s?.name || entry?.display_name || SUPPORT_DISPLAY_NAME)
+                : (s?.name || (isGroup ? 'A carregar...' : recipient));
             }
             newOnes.push({
               id: row.id,
@@ -533,10 +753,11 @@ export function ChatDetailScreen() {
               uri: row.attachment_url ?? undefined,
               time: formatMessageTime(row.created_at || new Date().toISOString()),
               fullCreatedAt: row.created_at || new Date().toISOString(),
-              senderName: isGroup && !isMine ? s?.name || 'A carregar...' : undefined,
-              senderColor: isGroup ? s?.color || senderColor(senderId) : undefined,
+              senderName: finalSenderName,
+              senderColor: s?.color || senderColor(senderId),
               senderProfileId: senderId,
-              senderPhone: isGroup && !isMine ? s?.phone || '' : undefined,
+              senderPhone: !isMine ? s?.phone || '' : undefined,
+              senderIsSupport,
               status: isMine ? 'delivered' : 'read',
             });
             if (row.sender_profile_id !== cpid) {
@@ -552,22 +773,38 @@ export function ChatDetailScreen() {
           if (idsToLoad.length > 0) {
             setTimeout(async () => {
               try {
-                const profilesRows = await loadSenderProfiles(idsToLoad);
-                const updates: Record<string, { name: string; color: string; phone: string }> = {};
+                const [profilesRows, supMapNew] = await Promise.all([
+                  loadSenderProfiles(idsToLoad),
+                  loadSupportStatusFromDB(idsToLoad),
+                ]);
+                setSupportUserMap((prev) => ({ ...prev, ...supMapNew }));
+                const updates: Record<string, { name: string; color: string; phone: string; is_support: boolean }> = {};
                 (profilesRows || []).forEach((p: any) => {
-                  const identity = resolveSenderIdentity(p);
+                  const identity = resolveSenderIdentity(p, { ...supMap, ...supMapNew });
                   updates[String(p.id)] = {
                     name: identity.name,
                     color: senderColor(String(p.id)),
                     phone: identity.phone,
+                    is_support: identity.is_support,
                   };
                 });
                 if (Object.keys(updates).length > 0) {
                   setSenderMap((prev) => ({ ...prev, ...updates }));
+                  const mergedSup = { ...supMap, ...supMapNew };
                   setMessages((mcur) => mcur.map((m) => {
                     const u = updates[m.senderProfileId || ''];
-                    if (!u || !isGroup) return m;
-                    return { ...m, senderName: m.owner === 'me' ? undefined : u.name, senderColor: u.color, senderPhone: m.owner === 'me' ? undefined : u.phone };
+                    const sid = m.senderProfileId || '';
+                    const isSup = u?.is_support || Boolean(mergedSup[sid]?.is_support) || isSupportProfileId(sid);
+                    const finalSupName = isSup && m.owner !== 'me'
+                      ? (mergedSup[sid]?.display_name || (isSupportProfileId(sid) ? SUPPORT_DISPLAY_NAME : u?.name))
+                      : u?.name;
+                    return {
+                      ...m,
+                      senderName: m.owner === 'me' ? undefined : (finalSupName || m.senderName),
+                      senderColor: u?.color || m.senderColor,
+                      senderPhone: m.owner === 'me' ? undefined : u?.phone,
+                      senderIsSupport: isSup,
+                    };
                   }));
                 }
               } catch {}
@@ -674,6 +911,10 @@ export function ChatDetailScreen() {
   };
 
   const handleSendText = async () => {
+    if (isChatSuspended) {
+      setError(`${chatSuspension?.reason || 'Por motivos de conteúdo que viola as políticas do Zora.'} Poderá voltar a enviar mensagens em ${suspensionCountdown}.`);
+      return;
+    }
     const trimmedText = messageText.trim();
     if (!threadId || !profileId) { setError('Não foi possível enviar'); return; }
     if (!trimmedText) return;
@@ -792,7 +1033,7 @@ export function ChatDetailScreen() {
     return () => clearTimeout(t);
   }, [isTyping]);
 
-  const sendDisabled = !messageText.trim();
+  const sendDisabled = isChatSuspended || !messageText.trim();
 
   const handleEmojiPress = (emoji: string) => {
     setMessageText((current) => `${current}${emoji}`);
@@ -818,7 +1059,7 @@ export function ChatDetailScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.headerUser} activeOpacity={0.7}>
-            <View style={[styles.headerAvatar, { backgroundColor: pickColor(recipient + (threadId || '')) }]}>
+            <View style={[styles.headerAvatar, { backgroundColor: verified ? '#0EA5E9' : pickColor(recipient + (threadId || '')) }]}>
               {isGroup ? (
                 <Ionicons name="people" size={20} color="#FFF" />
               ) : (
@@ -828,14 +1069,13 @@ export function ChatDetailScreen() {
             <View style={styles.headerText}>
               <View style={styles.headerNameRow}>
                 <Text style={styles.headerName} numberOfLines={1}>{recipient}</Text>
-                {verified ? <Ionicons name="shield-checkmark" size={14} color="#FFF" style={{ marginLeft: 4 }} /> : null}
               </View>
               <Text style={styles.headerStatus} numberOfLines={1}>
                 {headerTyping
                   ? 'a escrever...'
                   : isGroup
                     ? memberCount > 0 ? memberCount === 1 ? '+700 membros' : `${memberCount} membros` : 'Grupo do Zora'
-                    : contactPhone ? contactPhone : 'online'}
+                    : (contactPhone ? contactPhone : 'online')}
               </Text>
             </View>
           </TouchableOpacity>
@@ -866,8 +1106,14 @@ export function ChatDetailScreen() {
               styles.messagesContainer,
               { paddingBottom: 120 + composerBottomPad + (keyboardHeight > 0 ? 8 : 0) }
             ]}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true}
             keyboardShouldPersistTaps="handled"
+            bounces={true}
+            scrollEventThrottle={16}
+            overScrollMode="auto"
+            nestedScrollEnabled={true}
+            pointerEvents="auto"
+            alwaysBounceVertical={false}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={WA_GREEN} colors={[WA_GREEN]} />}
           >
             {!loadingMessages && messages.length > 0 && hasMore ? (
@@ -944,13 +1190,17 @@ export function ChatDetailScreen() {
                           onPress={() => handleReply(item)}
                           onLongPress={() => handleMessageAction(item)}
                         >
-                          {isGroup && !isMine && item.senderName ? (
+                          {(!isMine && item.senderName) ? (
                             <View style={styles.senderHeader}>
-                              <Text style={[styles.senderLabel, { color: item.senderColor || WA_GREEN_DARK }]} numberOfLines={1}>
-                                {item.senderName}
-                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: (item.senderPhone && !item.senderIsSupport && !verified) ? 2 : 0 }}>
+                                <Text
+                                  style={[styles.senderLabel, { color: item.senderColor || WA_GREEN_DARK, flexShrink: 1, minWidth: 0 }]}
+                                  numberOfLines={1}>
+                                  {item.senderName}
+                                </Text>
+                              </View>
                               {item.senderPhone ? (
-                                <Text style={styles.senderPhoneLabel} numberOfLines={1}>
+                                <Text style={[styles.senderPhoneLabel, { flexShrink: 1, minWidth: 0 }]} numberOfLines={1}>
                                   {item.senderPhone}
                                 </Text>
                               ) : null}
@@ -1061,11 +1311,25 @@ export function ChatDetailScreen() {
               </View>
             ) : null}
 
+            {isChatSuspended ? (
+              <View style={styles.suspensionBanner}>
+                <Ionicons name="lock-closed-outline" size={18} color="#991B1B" />
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.suspensionTitle}>Envio de mensagens suspenso</Text>
+                  <Text style={styles.suspensionText}>
+                    {chatSuspension?.reason || 'Por motivos de conteúdo que viola as políticas do Zora.'}
+                  </Text>
+                  <Text style={styles.suspensionCountdown}>Pode voltar a enviar em {suspensionCountdown}</Text>
+                </View>
+              </View>
+            ) : null}
+
             <View style={styles.composerRow}>
               <View style={styles.composerRow}>
                 <View style={styles.inputWrap}>
                   <TouchableOpacity
                     style={styles.composerAttachBtn}
+                    disabled={isChatSuspended}
                     onPress={() => { setShowAttach((v) => !v); }}
                     activeOpacity={0.7}
                   >
@@ -1080,9 +1344,12 @@ export function ChatDetailScreen() {
                     placeholderTextColor="#8696A0"
                     style={styles.composerInput}
                     multiline
+                    editable={!isChatSuspended}
+                    pointerEvents={isChatSuspended ? 'none' : 'auto'}
                   />
                   <TouchableOpacity
                     style={styles.composerAttachBtn}
+                    disabled={isChatSuspended}
                     activeOpacity={0.7}
                     onPress={() => { setShowEmojiPicker((value) => !value); setShowAttach(false); }}
                     accessibilityLabel="Abrir emojis"
@@ -1114,8 +1381,21 @@ export function ChatDetailScreen() {
   );
 }
 
+const WEB_STYLES = Platform.select<any>({
+  web: {
+    minHeight: '100vh' as any,
+    height: '100vh' as any,
+    overflow: 'hidden' as any,
+  },
+  default: {},
+});
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFF' },
+  container: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    ...WEB_STYLES,
+  } as any,
   wrapper: { flex: 1 },
 
   header: {
@@ -1125,23 +1405,23 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: WA_GREEN_DARK,
   },
-  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerUser: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  headerUser: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
   headerAvatar: {
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 10,
+    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 10, flexShrink: 0,
   },
   headerAvatarText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-  headerText: { flex: 1 },
-  headerNameRow: { flexDirection: 'row', alignItems: 'center' },
-  headerName: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-  headerStatus: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2 },
-  headerIcons: { flexDirection: 'row', alignItems: 'center' },
-  headerIconBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  headerText: { flex: 1, minWidth: 0, flexShrink: 1 },
+  headerNameRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0, flexShrink: 1 },
+  headerName: { color: '#FFF', fontSize: 16, fontWeight: '700', flexShrink: 1, minWidth: 0 },
+  headerStatus: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2, flexShrink: 1, minWidth: 0 },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
+  headerIconBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
 
   errorBar: { marginHorizontal: 12, marginTop: 10, padding: 10, backgroundColor: '#FEE2E2', borderRadius: 10 },
   errorBarText: { color: '#B91C1C', fontSize: 12, textAlign: 'center' },
 
-  chatArea: { flex: 1, backgroundColor: WA_BG },
+  chatArea: { flex: 1, backgroundColor: WA_BG, minWidth: 0 },
   messagesContainer: { paddingHorizontal: 8, paddingTop: 10, paddingBottom: 40 },
 
   loadOlderWrap: { paddingTop: 14, paddingBottom: 10, alignItems: 'center', justifyContent: 'center' },
@@ -1167,8 +1447,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 8,
     flexDirection: 'row', alignItems: 'center', ...shadow({ color: '#000', offset: { width: 0, height: 2 }, opacity: 0.05, radius: 6, elevation: 1 }),
   },
-  beginText: { color: '#667781', fontSize: 12, marginLeft: 6, textAlign: 'center' },
-  beginHint: { color: '#667781', fontSize: 12, marginTop: 14, textAlign: 'center' },
+  beginText: { color: '#667781', fontSize: 12, marginLeft: 6, textAlign: 'center', flexShrink: 1, minWidth: 0 },
+  beginHint: { color: '#667781', fontSize: 12, marginTop: 14, textAlign: 'center', flexShrink: 1 },
 
   dateSeparatorWrap: { alignItems: 'center', marginVertical: 10 },
   dateSeparator: {
@@ -1180,26 +1460,27 @@ const styles = StyleSheet.create({
   },
   dateSeparatorText: { color: '#667781', fontSize: 12, fontWeight: '600' },
 
-  messageRow: { marginBottom: 10, flexDirection: 'row', width: '100%', paddingHorizontal: 10 },
+  messageRow: { marginBottom: 10, flexDirection: 'row', width: '100%', paddingHorizontal: 10, minWidth: 0, flexWrap: 'nowrap' },
   messageRowCompact: { marginBottom: 4 },
   messageRowRight: { justifyContent: 'flex-end' },
   messageRowLeft: { justifyContent: 'flex-start' },
   senderAvatar: {
     width: 28, height: 28, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center', marginTop: 2,
+    alignItems: 'center', justifyContent: 'center', marginTop: 2, flexShrink: 0,
   },
   senderAvatarText: { color: '#FFF', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
-  senderHeader: { maxWidth: '100%', paddingBottom: 5, marginBottom: 2 },
-  senderLabel: { fontSize: 12.5, fontWeight: '800', color: '#128C7E' },
-  senderPhoneLabel: { fontSize: 10.5, color: '#667781', fontWeight: '600', marginTop: 1 },
+  senderHeader: { width: '100%', paddingBottom: 5, marginBottom: 2, minWidth: 0 },
+  senderLabel: { fontSize: 12.5, fontWeight: '800', color: '#128C7E', flex: 1, flexShrink: 1, minWidth: 0 },
+  senderPhoneLabel: { fontSize: 10.5, color: '#667781', fontWeight: '600', marginTop: 1, flexShrink: 1, minWidth: 0 },
 
   bubbleContainer: {
-    maxWidth: '78%',
+    maxWidth: '82%',
+    width: 'auto',
     minWidth: 0,
     flexShrink: 1,
     paddingVertical: 2,
   },
-  avatarSpacer: { width: 28 },
+  avatarSpacer: { width: 28, flexShrink: 0 },
   bubbleWrap: {
     maxWidth: '100%',
     minWidth: 0,
@@ -1211,13 +1492,13 @@ const styles = StyleSheet.create({
 
   bubble: {
     maxWidth: '100%',
-    minWidth: 0,
+    minWidth: 60,
+    width: 'auto',
     alignSelf: 'flex-start',
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
     paddingRight: 14,
-    overflow: 'hidden',
     ...shadow({ color: '#000', offset: { width: 0, height: 1 }, opacity: 0.08, radius: 4, elevation: 3 }),
     position: 'relative',
   },
@@ -1228,7 +1509,6 @@ const styles = StyleSheet.create({
   bubblePhoto: { padding: 4, paddingBottom: 4 },
   bubbleSelected: {
     ...shadow({ color: WA_GREEN, offset: { width: 0, height: 0 }, opacity: 0.35, radius: 6, elevation: 4 }),
-    transform: [{ scale: 1 }],
     borderWidth: 2,
     borderColor: 'rgba(37, 211, 102, 0.5)',
   },
@@ -1245,19 +1525,19 @@ const styles = StyleSheet.create({
     borderTopWidth: 12, borderTopColor: 'transparent',
   },
 
-  textBubbleInner: { paddingLeft: 2, paddingRight: 2, paddingTop: 2, minWidth: 0 },
-  messageText: { fontSize: 15, lineHeight: 22, color: '#111B21', flexShrink: 1, flexWrap: 'wrap', minWidth: 0 },
+  textBubbleInner: { paddingLeft: 2, paddingRight: 2, paddingTop: 2, minWidth: 0, width: '100%' },
+  messageText: { fontSize: 15, lineHeight: 22, color: '#111B21', flexShrink: 1, minWidth: 0, width: '100%' },
   messageTextMe: { color: '#111B21' },
   messageTextOther: { color: '#111B21' },
 
-  metaRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 6, marginBottom: 0 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 6, marginBottom: 0, flexShrink: 0, flexWrap: 'nowrap' },
   photoMeta: { position: 'absolute', bottom: 6, right: 8 },
-  msgTime: { fontSize: 10, marginRight: 3 },
+  msgTime: { fontSize: 10, marginRight: 3, flexShrink: 0 },
   msgTimeMe: { color: 'rgba(17,27,33,0.55)' },
   msgTimeOther: { color: 'rgba(17,27,33,0.55)' },
-  statusIconWrap: { marginLeft: 2 },
+  statusIconWrap: { marginLeft: 2, flexShrink: 0 },
 
-  photoBubble: { width: 220, height: 170, borderRadius: 6, marginBottom: 16 },
+  photoBubble: { width: 220, maxWidth: '100%', height: 170, borderRadius: 6, marginBottom: 16 },
 
 
   typingBubble: { paddingVertical: 14, paddingHorizontal: 16, minWidth: 70 },
@@ -1279,16 +1559,32 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,0,0,0.05)',
     overflow: 'hidden',
     minHeight: 50,
+    maxWidth: '100%',
   },
   replyBarMine: { backgroundColor: '#F2FAF0' },
   replyBarOther: { backgroundColor: '#FFFFFF' },
-  replyBarIndicator: { width: 4, height: '100%', borderRadius: 2 },
-  replyBarContent: { flex: 1, paddingVertical: 6, paddingHorizontal: 10, justifyContent: 'center' },
-  replyBarSender: { fontSize: 12, fontWeight: '700', marginBottom: 2 },
-  replyBarPreview: { fontSize: 12.5, color: '#667781', lineHeight: 15 },
-  replyBarClose: { paddingHorizontal: 10, paddingVertical: 4 },
+  replyBarIndicator: { width: 4, minHeight: 50, height: '100%', borderRadius: 2, flexShrink: 0 },
+  replyBarContent: { flex: 1, paddingVertical: 6, paddingHorizontal: 10, justifyContent: 'center', minWidth: 0 },
+  replyBarSender: { fontSize: 12, fontWeight: '700', marginBottom: 2, flexShrink: 1 },
+  replyBarPreview: { fontSize: 12.5, color: '#667781', lineHeight: 15, flexShrink: 1 },
+  replyBarClose: { paddingHorizontal: 10, paddingVertical: 4, flexShrink: 0 },
 
-  composerArea: { backgroundColor: '#F0F2F5', paddingTop: 8, paddingBottom: 24 },
+  suspensionBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginHorizontal: 8,
+    marginBottom: 8,
+    padding: 10,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 10,
+  },
+  suspensionTitle: { color: '#991B1B', fontSize: 12.5, fontWeight: '800' },
+  suspensionText: { color: '#7F1D1D', fontSize: 12, marginTop: 2 },
+  suspensionCountdown: { color: '#991B1B', fontSize: 12, fontWeight: '800', marginTop: 4 },
+
+  composerArea: { backgroundColor: '#F0F2F5', paddingTop: 8, paddingBottom: 24, width: '100%' },
   emojiPanel: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1313,12 +1609,13 @@ const styles = StyleSheet.create({
   emojiText: { fontSize: 25 },
   attachSheet: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     paddingHorizontal: 8,
     paddingVertical: 10,
     paddingBottom: 4,
     backgroundColor: '#F0F2F5',
   },
-  attachItem: { flex: 1, alignItems: 'center' },
+  attachItem: { flex: 1, minWidth: 80, alignItems: 'center' },
   attachIcon: {
     width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', marginBottom: 6,
     ...shadow({ color: '#000', offset: { width: 0, height: 4 }, opacity: 0.1, radius: 6, elevation: 2 }),
@@ -1330,6 +1627,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 8,
+    width: '100%',
   },
   inputWrap: {
     flex: 1,
@@ -1341,8 +1639,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     minHeight: 48,
     marginRight: 8,
+    minWidth: 0,
   },
-  composerAttachBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  composerAttachBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   composerInput: {
     flex: 1,
     fontSize: 15,
@@ -1353,7 +1652,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
   sendBtn: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: WA_GREEN, alignItems: 'center', justifyContent: 'center',
+    width: 48, height: 48, borderRadius: 24, backgroundColor: WA_GREEN, alignItems: 'center', justifyContent: 'center', flexShrink: 0,
     ...shadow({ color: WA_GREEN_DARK, offset: { width: 0, height: 3 }, opacity: 0.3, radius: 6, elevation: 3 }),
   },
   micBtn: { backgroundColor: WA_GREEN },
