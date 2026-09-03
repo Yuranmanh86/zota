@@ -1,5 +1,5 @@
 import { backend } from './backendClient';
-import { Platform, Share as RNShare, Alert } from 'react-native';
+import { Linking, Platform, Share as RNShare, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Sharing from 'expo-sharing';
 
@@ -57,6 +57,7 @@ let summaryCache: { data: ReferralSummary; expiresAt: number } | null = null;
 const SUMMARY_TTL_MS = 10_000;
 let historyCache: { data: ReferralRewardRow[]; expiresAt: number } | null = null;
 const HISTORY_TTL_MS = 15_000;
+const DEFAULT_INVITE_BASE_URL = 'https://zora.org.za/invite';
 
 export function invalidateReferralCache() {
   summaryCache = null;
@@ -70,9 +71,10 @@ export async function getReferralSummary(forceFresh = false): Promise<ReferralSu
   if (rpcRes?.error) throw new Error(rpcRes.error?.message || 'Erro ao carregar resumo de indicações.');
   const rows: any[] = Array.isArray(rpcRes?.data) ? rpcRes.data : (rpcRes?.data ? [rpcRes.data] : []);
   const raw = rows[0] ?? {};
+  const referralCode = String(raw.referral_code ?? '');
   const summary: ReferralSummary = {
-    referral_code: String(raw.referral_code ?? ''),
-    invite_link: String(raw.invite_link ?? ''),
+    referral_code: referralCode,
+    invite_link: buildInviteLink(referralCode),
     total_invited: Number(raw.total_invited ?? 0),
     active_invited: Number(raw.active_invited ?? 0),
     total_packages_purchased: Number(raw.total_packages_purchased ?? 0),
@@ -191,7 +193,33 @@ export async function shareReferralLink(message: string, url: string): Promise<{
 export function buildInviteLink(referralCode: string): string {
   const code = (referralCode || '').trim();
   if (!code) return '';
-  const base = (typeof process !== 'undefined' && (process.env as any).EXPO_PUBLIC_INVITE_BASE_URL)
-    || 'https://zora.app/invite';
-  return `${base}/${encodeURIComponent(code)}`;
+  return `${DEFAULT_INVITE_BASE_URL}/${encodeURIComponent(code)}`;
+}
+
+export function extractReferralCode(url?: string | null): string {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    const inviteIndex = parsed.pathname.toLowerCase().split('/').indexOf('invite');
+    if (inviteIndex >= 0) {
+      const code = parsed.pathname.split('/')[inviteIndex + 1];
+      if (code) return decodeURIComponent(code).trim().toUpperCase();
+    }
+    const queryCode = parsed.searchParams.get('ref') || parsed.searchParams.get('invite');
+    return queryCode?.trim().toUpperCase() || '';
+  } catch {
+    const match = url.match(/(?:\/invite\/|[?&](?:ref|invite)=)([A-Za-z0-9_-]+)/i);
+    return match?.[1]?.trim().toUpperCase() || '';
+  }
+}
+
+export async function getInitialReferralCode(): Promise<string> {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      return extractReferralCode(window.location.href);
+    }
+    return extractReferralCode(await Linking.getInitialURL());
+  } catch {
+    return '';
+  }
 }

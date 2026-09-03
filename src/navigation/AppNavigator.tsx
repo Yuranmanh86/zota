@@ -32,6 +32,7 @@ import { backend } from '../services/backendClient';
 import { useAppStore } from '../store/appStore';
 import { getUserProfile, isAdminByAuthUserId } from '../services/auth';
 import { AppBalanceSyncer } from '../providers/AppBalanceSyncer';
+import { getInitialReferralCode } from '../services/referrals';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -49,10 +50,10 @@ function MainTabs() {
   const tabBarBottom = Math.max(1, insets.bottom + 1);
   const isWeb = Platform.OS === 'web';
   const tabBarStyleBase: any = {
-    position: 'absolute',
+    position: isWeb ? 'fixed' : 'absolute',
     left: 14,
     right: 14,
-    bottom: tabBarBottom,
+    bottom: isWeb ? 12 : tabBarBottom,
     height: 76,
     borderRadius: 30,
     paddingTop: 6,
@@ -207,6 +208,7 @@ export function AppNavigator() {
 
     async function loadSession() {
       try {
+        const initialReferralCode = await getInitialReferralCode();
         let session: any = null;
         try {
           const res: any = await backend.auth.getSession();
@@ -237,7 +239,7 @@ export function AppNavigator() {
             safeSetInitialRoute('Login');
           }
         } else {
-          safeSetInitialRoute('Login');
+          safeSetInitialRoute(initialReferralCode ? 'Register' : 'Login');
         }
       } catch {
         if (isMounted && !cancelled) {
@@ -346,7 +348,6 @@ export function AppNavigator() {
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="Conta" component={ProfileScreen} />
           <Stack.Screen name="Support" component={SupportScreen} />
-          <Stack.Screen name="Chat" component={ChatScreen} />
           <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
           <Stack.Screen name="ChatAdmin" component={ChatAdminScreen} />
           <Stack.Screen name="Reload" component={ReloadScreen} />

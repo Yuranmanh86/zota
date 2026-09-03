@@ -26,14 +26,14 @@ export function PoliciesScreen() {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>2. Aceitação dos Termos</Text>
           <Text style={styles.paragraph}>
-            Ao acessar ou utilizar o aplicativo Zora, o usuário concorda com estes Termos de Uso e com a Política de
-            Privacidade. Se o usuário não concordar com qualquer condição aqui prevista, deve interromper o uso do aplicativo.
+            Ao utilizar o aplicativo Zora, o usuário concorda com estes Termos de Uso e com a Política de
+            Privacidade. Se o usuário não concordar com qualquer condição aqui prevista, nao sera possivel criar a conta.
           </Text>
         </View>
 
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>3. Definições</Text>
-          <Text style={styles.itemText}>• Zora: o aplicativo e a plataforma digital da marca, incluindo mobile app, backend e serviços associados.</Text>
+          <Text style={styles.itemText}>• Zora: o aplicativo e a plataforma digital da marca, incluindo mobile app, Web, PWA e serviços associados.</Text>
           <Text style={styles.itemText}>• Usuário: pessoa física que se cadastra ou utiliza os serviços dentro da plataforma Zora.</Text>
           <Text style={styles.itemText}>• Conta: o registro de usuário, com credenciais e perfil associado à Zora.</Text>
           <Text style={styles.itemText}>• Dados Pessoais: informações capazes de identificar o usuário, como nome, telefone, e-mail e identificadores de uso.</Text>
@@ -48,7 +48,7 @@ export function PoliciesScreen() {
           <Text style={styles.itemText}>• Poupança: aplicação de valores em produtos de poupança com prazo curto, saldo bloqueado e liberação em até 72 horas.</Text>
           <Text style={styles.itemText}>• Participação comunitária: colaboração em grupos de contribuição e poupança compartilhada.</Text>
           <Text style={styles.itemText}>• Suporte e chat: canal de atendimento via chat interno, suporte com assistente e conversa com equipe Zora.</Text>
-          <Text style={styles.itemText}>• Recarga e saque: operações de recarga (reload) e retirada de valores, quando disponíveis no fluxo.</Text>
+          <Text style={styles.itemText}>• Recarga e saque: operações de recarga  e retirada de valores, quando disponíveis no fluxo.</Text>
         </View>
 
         <View style={styles.sectionCard}>
@@ -70,7 +70,6 @@ export function PoliciesScreen() {
           <Text style={styles.paragraph}>A Zora exige cadastro com dados verdadeiros para acesso ao aplicativo.</Text>
           <Text style={styles.itemText}>• nome completo;</Text>
           <Text style={styles.itemText}>• telefone;</Text>
-          <Text style={styles.itemText}>• e-mail ou alias de e-mail para autenticação;</Text>
           <Text style={styles.itemText}>• senha de acesso.</Text>
           <Text style={styles.paragraph}>A plataforma suporta autenticação biométrica para facilitar o login seguro, desde que o dispositivo do usuário seja compatível e a opção seja ativada.</Text>
           <Text style={styles.itemText}>• manter a confidencialidade da senha e códigos de acesso;</Text>
@@ -94,10 +93,10 @@ export function PoliciesScreen() {
             A Zora busca prestar seus serviços com segurança, disponibilidade e qualidade, mas não garante a operação contínua e ininterrupta do aplicativo.
           </Text>
           <Text style={styles.paragraph}>A plataforma não se responsabiliza por:</Text>
-          <Text style={styles.itemText}>• perdas financeiras decorrentes de uso indevido ou falha de conexão;</Text>
+          
           <Text style={styles.itemText}>• erros temporários de processamento;</Text>
           <Text style={styles.itemText}>• problemas causados por terceiros, redes ou serviços externos;</Text>
-          <Text style={styles.itemText}>• decisões de investimento ou aplicação tomadas com base em informações do app.</Text>
+  
         </View>
 
         <View style={styles.sectionCard}>

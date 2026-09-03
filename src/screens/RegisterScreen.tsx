@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { appTheme } from '../theme/appTheme';
 import { signUpUser, getPhoneAliasEmail, getCurrentSession } from '../services/auth';
+import { getInitialReferralCode } from '../services/referrals';
 import { useAppStore } from '../store/appStore';
 import { BrandLogo } from '../components/BrandLogo';
 
@@ -168,6 +169,14 @@ export function RegisterScreen() {
     }, 200);
     return () => clearTimeout(t);
   }, [password.length]);
+
+  useEffect(() => {
+    let mounted = true;
+    getInitialReferralCode().then((code) => {
+      if (mounted && code && !inviteCode) setInviteCode(code);
+    });
+    return () => { mounted = false; };
+  }, []);
 
   const handlePhoneChange = useCallback((t: string) => {
     setPhone(formatPhoneStatic(t));

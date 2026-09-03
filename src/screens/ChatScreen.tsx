@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, SectionList, Pressable, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, SectionList, Pressable, Platform, Modal, Alert } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppStore } from '../store/appStore';
 import { getUserProfile, SUPPORT_THREAD_ID, ALL_ZORA_GROUP_IDS, ZORA_SYSTEM_PROFILE_ID } from '../services/auth';
 import { backend } from '../services/backendClient';
-import { getContacts, joinChatThread, getOrCreatePrivateChat, getLastReadAll, setLastRead, getLastRead } from '../services/chat';
+import { getContacts, joinChatThread, getOrCreatePrivateChat, getLastReadAll, setLastRead, getLastRead, sendChatMessage } from '../services/chat';
 import { shadow } from '../theme/appTheme';
 
 const WA_GREEN = '#25D366';
@@ -169,6 +169,8 @@ const SUPPORT_THREAD_TITLE = 'Suporte Zora';
 export function ChatScreen() {
   const { theme } = useAppStore();
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [privateChats, setPrivateChats] = useState<PrivateChat[]>([]);
@@ -189,6 +191,9 @@ export function ChatScreen() {
   const privateChatsRef = useRef<PrivateChat[]>([]);
   const groupThreadsRef = useRef<Conversation[]>([]);
   const profileCacheRef = useRef<{ profileId: string } | null>(null);
+  const [shareSearch, setShareSearch] = useState('');
+  const [shareSending, setShareSending] = useState(false);
+  const [sharePayload, setSharePayload] = useState<{ text: string; url?: string } | null>(null);
 
   const [supportUserMap, setSupportUserMap] = useState<SupportUserMap>({});
   const supportUserMapRef = useRef<SupportUserMap>({});
@@ -196,6 +201,15 @@ export function ChatScreen() {
   useEffect(() => {
     supportUserMapRef.current = supportUserMap;
   }, [supportUserMap]);
+
+  useEffect(() => {
+    const shareText = route.params?.shareText;
+    if (shareText) {
+      setSharePayload({ text: shareText, url: route.params?.shareUrl });
+      setShareSearch('');
+      navigation.setParams({ shareText: undefined, shareUrl: undefined });
+    }
+  }, [route.params?.shareText, route.params?.shareUrl, navigation]);
 
   const applySupportOverride = (profile: { id: string; nome_completo: string }, supMap?: SupportUserMap) => {
     const map = supMap ?? supportUserMapRef.current;
@@ -943,6 +957,71 @@ export function ChatScreen() {
     });
   };
 
+  const shareTargets = useMemo(() => {
+    const term = shareSearch.trim().toLowerCase();
+    const contacts = allContacts
+      .filter((contact) => !term || contact.nome_completo.toLowerCase().includes(term) || contact.telefone.toLowerCase().includes(term))
+      .map((contact) => ({ kind: 'contact' as const, id: contact.id, label: contact.nome_completo, subtitle: contact.telefone, contact }));
+    const groups = groupThreads
+      .filter((group) => !term || group.name.toLowerCase().includes(term))
+      .map((group) => ({ kind: 'group' as const, id: group.id, label: group.name, subtitle: `${group.memberCount || 0} membros`, group }));
+    return [...contacts, ...groups];
+  }, [allContacts, groupThreads, shareSearch]);
+
+  const handleShareTarget = async (target: (typeof shareTargets)[number]) => {
+    if (!sharePayload || !profileId || shareSending) return;
+    setShareSending(true);
+    try {
+      let targetThreadId: string | null = null;
+      if (target.kind === 'group') {
+        if (!joinedThreads.includes(target.group.id)) await handleJoinThread(target.group.id);
+        targetThreadId = target.group.id;
+      } else {
+        const existing = privateChats.find((chat) => chat.contactId === target.contact.id);
+        const threadResult = existing
+          ? { data: existing.threadId, error: null }
+          : await getOrCreatePrivateChat(profileId, target.contact.id);
+        if (threadResult.error || !threadResult.data) throw new Error(threadResult.error || 'Não foi possível abrir a conversa.');
+        targetThreadId = threadResult.data as string;
+      }
+      const result = await sendChatMessage(targetThreadId, profileId, sharePayload.text, 'text');
+      if (result.error) throw new Error(result.error);
+      const sentAt = new Date().toISOString();
+      if (target.kind === 'group') {
+        setGroupThreads((current) => current.map((group) => group.id === targetThreadId
+          ? { ...group, preview: sharePayload.text.slice(0, 40), timestamp: formatChatTime(sentAt), lastMessageAt: sentAt, messageCount: (group.messageCount || 0) + 1, isMine: true }
+          : group));
+      } else {
+        const existing = privateChats.find((chat) => chat.threadId === targetThreadId);
+        if (existing) {
+          setPrivateChats((current) => current.map((chat) => chat.threadId === targetThreadId
+            ? { ...chat, preview: sharePayload.text.slice(0, 40), timestamp: formatChatTime(sentAt), lastMessageAt: sentAt, messageCount: (chat.messageCount || 0) + 1, isMine: true }
+            : chat));
+        } else {
+          setPrivateChats((current) => [{
+            threadId: targetThreadId!,
+            contactId: target.contact.id,
+            nome_completo: target.contact.nome_completo,
+            telefone: target.contact.telefone,
+            preview: sharePayload.text.slice(0, 40),
+            timestamp: formatChatTime(sentAt),
+            verified: Boolean(target.contact.is_support),
+            lastMessageAt: sentAt,
+            messageCount: 1,
+            unread: 0,
+            isMine: true,
+          }, ...current]);
+        }
+      }
+      setSharePayload(null);
+      setActiveTab(target.kind === 'group' ? 'groups' : 'private');
+    } catch (error: any) {
+      Alert.alert('Não foi possível partilhar', error?.message || 'Tente novamente.');
+    } finally {
+      setShareSending(false);
+    }
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
@@ -962,6 +1041,48 @@ export function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      <Modal visible={Boolean(sharePayload)} transparent animationType="slide" onRequestClose={() => setSharePayload(null)}>
+        <View style={[styles.shareModalOverlay, { paddingBottom: Math.max(92, insets.bottom + 88) }]}>
+          <View style={styles.shareModalCard}>
+            <View style={styles.shareModalHeader}>
+              <View>
+                <Text style={styles.shareModalTitle}>Partilhar no chat</Text>
+                <Text style={styles.shareModalSubtitle}>Escolha um contacto ou grupo</Text>
+              </View>
+              <TouchableOpacity onPress={() => setSharePayload(null)} style={styles.shareModalClose}>
+                <Ionicons name="close" size={20} color="#54656F" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.sharePreviewBubble}>
+              <Ionicons name="share-social-outline" size={16} color={WA_GREEN_DARK} />
+              <Text style={styles.sharePreviewText} numberOfLines={3}>{sharePayload?.text}</Text>
+            </View>
+            <TextInput
+              value={shareSearch}
+              onChangeText={setShareSearch}
+              placeholder="Pesquisar contacto ou grupo"
+              placeholderTextColor="#8696A0"
+              style={styles.shareSearchInput}
+            />
+            <ScrollView style={styles.shareTargetList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+              {shareTargets.map((target) => (
+                <TouchableOpacity key={`${target.kind}-${target.id}`} style={styles.shareTarget} onPress={() => handleShareTarget(target)} disabled={shareSending}>
+                  <View style={[styles.shareTargetIcon, { backgroundColor: target.kind === 'group' ? WA_GREEN_DARK : pickColor(target.id) }]}>
+                    <Ionicons name={target.kind === 'group' ? 'people' : 'person'} size={18} color="#FFF" />
+                  </View>
+                  <View style={styles.shareTargetText}>
+                    <Text style={styles.shareTargetLabel} numberOfLines={1}>{target.label}</Text>
+                    <Text style={styles.shareTargetSubtitle} numberOfLines={1}>{target.subtitle}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={WA_GREEN_DARK} />
+                </TouchableOpacity>
+              ))}
+              {shareTargets.length === 0 ? <Text style={styles.shareEmptyText}>Nenhum contacto ou grupo encontrado.</Text> : null}
+            </ScrollView>
+            {shareSending ? <ActivityIndicator color={WA_GREEN} style={{ marginTop: 10 }} /> : null}
+          </View>
+        </View>
+      </Modal>
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
           <Text style={styles.headerTitle}>Bate-Papo</Text>
@@ -1447,6 +1568,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   searchInput: { flex: 1, fontSize: 14, color: '#111B21', padding: 0, minWidth: 0 },
+
+  shareModalOverlay: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', backgroundColor: 'rgba(17, 27, 33, 0.58)' },
+  shareModalCard: { width: '100%', maxWidth: 560, maxHeight: '100%', flexShrink: 1, backgroundColor: '#FFF', borderRadius: 24, padding: 18, shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 14 },
+  shareModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  shareModalTitle: { color: '#111B21', fontSize: 18, fontWeight: '800' },
+  shareModalSubtitle: { color: '#667781', fontSize: 12, marginTop: 3 },
+  shareModalClose: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F0F2F5', alignItems: 'center', justifyContent: 'center' },
+  sharePreviewBubble: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#D9FDD3', borderRadius: 16, borderTopLeftRadius: 4, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 14, maxWidth: '92%', alignSelf: 'flex-end' },
+  sharePreviewText: { flex: 1, color: '#111B21', fontSize: 13, lineHeight: 19, marginLeft: 8 },
+  shareSearchInput: { backgroundColor: '#F0F2F5', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 11, color: '#111B21', marginBottom: 10 },
+  shareTargetList: { minHeight: 80, maxHeight: 360, flexGrow: 0, flexShrink: 1 },
+  shareTarget: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F0F2F5' },
+  shareTargetIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  shareTargetText: { flex: 1, minWidth: 0 },
+  shareTargetLabel: { color: '#111B21', fontSize: 15, fontWeight: '700' },
+  shareTargetSubtitle: { color: '#667781', fontSize: 12, marginTop: 3 },
+  shareEmptyText: { color: '#667781', textAlign: 'center', paddingVertical: 28 },
 
   sectionHeaderWA: {
     flexDirection: 'row',

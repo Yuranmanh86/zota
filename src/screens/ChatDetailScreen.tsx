@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, RefreshControl, View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Share, Alert, Keyboard } from 'react-native';
+import { Image, RefreshControl, View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Linking, Alert, Keyboard } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -143,6 +143,22 @@ function formatDateSeparator(iso: string) {
 const generateGroupLink = (threadId: string) => {
   return `zora://chat/${encodeURIComponent(threadId)}`;
 };
+
+const URL_PATTERN = /(https?:\/\/[^\s]+|zora:\/\/[^\s]+)/gi;
+
+function renderMessageText(text: string, onOpenLink: (url: string) => void) {
+  return text.split(URL_PATTERN).map((part, index) => {
+    const isLink = /^(https?:\/\/|zora:\/\/)/i.test(part);
+    const displayPart = isLink ? part.replace(/([/:.?=&_-])/g, '$1\u200b') : part;
+    return isLink ? (
+      <Text key={`${part}-${index}`} style={styles.messageLink} onPress={() => onOpenLink(part.replace(/[),.!?]+$/, ''))}>
+        {displayPart}
+      </Text>
+    ) : (
+      <Text key={`${part}-${index}`}>{part}</Text>
+    );
+  });
+}
 
 function formatPhoneRaw(phone: string): string {
   const digits = (phone || '').replace(/\D/g, '');
@@ -897,16 +913,20 @@ export function ChatDetailScreen() {
     try {
       const link = generateGroupLink(threadId);
       const message = `🎟️ Convite para o grupo "${recipient}" no Zora!\n\nAceda a: ${link}\n\n${memberCount > 0 ? `Já somos ${memberCount} membros.` : ''} Não perca!`;
-      const shareResult = await Share.share({
-        message,
-        title: `Convite: ${recipient}`,
-        url: link,
+      navigation.navigate('Main', {
+        screen: 'Bate-Papo',
+        params: { shareText: message, shareUrl: link },
       });
-      if (shareResult.action === Share.sharedAction) {
-        // partilhado com sucesso
-      }
     } catch {
       Alert.alert('Não foi possível partilhar');
+    }
+  };
+
+  const handleOpenLink = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Link indisponível', 'Não foi possível abrir este link.');
     }
   };
 
@@ -1217,7 +1237,7 @@ export function ChatDetailScreen() {
                           ) : (
                             <View style={styles.textBubbleInner}>
                               <Text style={[styles.messageText, isMine ? styles.messageTextMe : styles.messageTextOther]}>
-                                {item.text || 'Mensagem'}
+                                {renderMessageText(item.text || 'Mensagem', handleOpenLink)}
                               </Text>
                               <View style={styles.metaRow}>
                                 <Text style={[styles.msgTime, isMine ? styles.msgTimeMe : styles.msgTimeOther]}>{item.time}</Text>
@@ -1525,10 +1545,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 12, borderTopColor: 'transparent',
   },
 
-  textBubbleInner: { paddingLeft: 2, paddingRight: 2, paddingTop: 2, minWidth: 0, width: '100%' },
-  messageText: { fontSize: 15, lineHeight: 22, color: '#111B21', flexShrink: 1, minWidth: 0, width: '100%' },
+  textBubbleInner: { paddingLeft: 2, paddingRight: 2, paddingTop: 2, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' },
+  messageText: { fontSize: 15, lineHeight: 22, color: '#111B21', flexShrink: 1, minWidth: 0, maxWidth: '100%' },
   messageTextMe: { color: '#111B21' },
   messageTextOther: { color: '#111B21' },
+  messageLink: { color: '#087F8C', textDecorationLine: 'underline' },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 6, marginBottom: 0, flexShrink: 0, flexWrap: 'nowrap' },
   photoMeta: { position: 'absolute', bottom: 6, right: 8 },

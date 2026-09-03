@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zora-static-v1';
+const CACHE_NAME = 'zora-static-v2';
 const APP_SHELL = ['/', '/index.html', '/favicon.png'];
 
 self.addEventListener('install', (event) => {

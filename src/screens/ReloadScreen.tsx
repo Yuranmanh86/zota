@@ -62,6 +62,7 @@ const ONLY_ACCOUNT = {
 };
 
 const QUICK_AMOUNTS = [500, 1000, 2500, 5000];
+const MAX_DEPOSIT_AMOUNT = 30000;
 
 export function ReloadScreen() {
   const navigation = useNavigation<any>();
@@ -195,6 +196,10 @@ export function ReloadScreen() {
   const handleReload = async () => {
     if (numericAmount <= 0) {
       showUserMessage('Valor inválido', 'Informe um valor maior que zero para recarregar.');
+      return;
+    }
+    if (numericAmount > MAX_DEPOSIT_AMOUNT) {
+      showUserMessage('Limite excedido', 'O pedido de depósito não pode ultrapassar 30.000 MZN.');
       return;
     }
     if (hasPendingRequest) {
@@ -415,7 +420,7 @@ export function ReloadScreen() {
             <TextInput
               style={styles.input}
               value={amount}
-              onChangeText={setAmount}
+              onChangeText={(value) => setAmount(value.replace(/\D/g, '').slice(0, 5))}
               keyboardType="numeric"
               placeholder="Ex: 5 000"
               placeholderTextColor="#A1A1AA"

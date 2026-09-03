@@ -15,7 +15,7 @@ export function SupportScreen() {
         <Text style={styles.amount}>Como posso ajudar hoje?</Text>
         <Text style={styles.label}>Saiba mais sobre investimentos e empréstimos.</Text>
       </View>
-      <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Chat')}>
+      <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Main', { screen: 'Bate-Papo' })}>
         <Text style={styles.buttonText}>Abrir chat com suporte</Text>
       </TouchableOpacity>
       </ScrollView>

@@ -8,6 +8,7 @@
     "userInterfaceStyle": "light",
     "backgroundColor": "#FFF7ED",
     "primaryColor": "#FF6A2B",
+    "scheme": "zora",
 
  
     "androidStatusBar": {
@@ -31,6 +32,20 @@
         "backgroundColor": "#FFF7ED"
       },
       "package": "mz.co.zora.app",
+        "intentFilters": [
+          {
+            "action": "VIEW",
+            "autoVerify": true,
+            "data": [
+              {
+                "scheme": "https",
+                "host": "zora.org.za",
+                "pathPrefix": "/invite"
+              }
+            ],
+            "category": ["BROWSABLE", "DEFAULT"]
+          }
+        ],
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",

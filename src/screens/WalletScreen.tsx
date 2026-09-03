@@ -24,11 +24,12 @@ import { isCurrentUserAdmin } from '../services/admin';
 import {
   copyToClipboard,
   getReferralSummary,
-  shareReferralLink,
   withdrawBonus,
   buildInviteLink,
   type ReferralSummary,
 } from '../services/referrals';
+import { invalidateDashboardCache } from '../hooks/useDashboardSummary';
+import { invalidateFinanceCache } from '../services/finance';
 import {
   enableBiometric,
   getPhoneAliasEmail,
@@ -153,8 +154,10 @@ export function WalletScreen() {
   const onShare = async () => {
     if (!inviteLink) return;
     const msg = `Junte-se à Zora usando o meu link de indicação e compre um pacote N1 a N9 para começares a investir com retorno diário garantido. Eu ganho 10% do valor como bónus de indicação. Obrigado!\n\n${inviteLink}`;
-    const res = await shareReferralLink(msg, inviteLink);
-    if (res.ok && (res.method === 'clipboard' || res.method === 'clipboard-fallback')) flashCopied('link');
+    navigation.navigate('Main', {
+      screen: 'Bate-Papo',
+      params: { shareText: msg, shareUrl: inviteLink },
+    });
   };
 
   const onWithdrawBonus = async () => {
@@ -175,8 +178,10 @@ export function WalletScreen() {
             try {
               const r = await withdrawBonus();
               if (r.success) {
-                Alert.alert('Sucesso', r.message);
+                invalidateFinanceCache();
+                invalidateDashboardCache();
                 await loadAll(true);
+                navigation.navigate('Main', { screen: 'Home' });
               } else {
                 Alert.alert('Aviso', r.message);
               }
@@ -970,9 +975,9 @@ const styles = StyleSheet.create({
   },
   referralTitle: { fontSize: 14, fontWeight: '800', color: '#111827', fontFamily: appTheme.fontFamily },
   referralSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2, fontFamily: appTheme.fontFamily },
-  referralBalanceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  referralBalanceLabel: { fontSize: 11.5, color: '#9A4D00', fontWeight: '700', fontFamily: appTheme.fontFamily },
-  referralBalanceValue: { fontSize: 22, fontWeight: '900', color: '#111827', marginTop: 2, fontFamily: appTheme.fontFamily },
+  referralBalanceRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, columnGap: 12 },
+  referralBalanceLabel: { fontSize: 11.5, color: '#9A4D00', fontWeight: '700', fontFamily: appTheme.fontFamily, flexShrink: 1 },
+  referralBalanceValue: { fontSize: 22, fontWeight: '900', color: '#111827', marginTop: 2, fontFamily: appTheme.fontFamily, flexShrink: 1 },
   withdrawButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -983,6 +988,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF7ED',
     borderWidth: 1,
     borderColor: '#FED7AA',
+    marginTop: 6,
+    flexShrink: 0,
   },
   withdrawButtonDisabled: { opacity: 0.55 },
   withdrawButtonText: { color: ZORA_ORANGE, fontWeight: '800', fontSize: 12, fontFamily: appTheme.fontFamily },
@@ -1015,9 +1022,10 @@ const styles = StyleSheet.create({
   referralActionText: { color: ZORA_ORANGE, fontWeight: '700', fontSize: 12, fontFamily: appTheme.fontFamily },
   referralActionTextActive: { color: '#FFF' },
   referralLinkText: { fontSize: 13, color: '#111827', flex: 1, marginRight: 8, fontWeight: '500', fontFamily: appTheme.fontFamily },
-  referralActionsRow: { flexDirection: 'row', marginTop: 10, gap: 10 },
+  referralActionsRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10, gap: 10 },
   referralActionBtn: {
     flex: 1,
+    minWidth: 130,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

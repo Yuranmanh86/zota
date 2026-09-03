@@ -724,77 +724,6 @@ create policy policy_savings_accounts_update
   with check (auth.uid() = (select auth_user_id from public.user_profiles where id = public.savings_accounts.profile_id));
 
 -- ============================================================
--- TABELA: xitique_groups (Grupos de Xitique)
--- ============================================================
-create table public.xitique_groups (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  description text,
-  contribution_value numeric(14,2) not null default 0,
-  frequency text not null default 'monthly',
-  status text not null default 'active',
-  created_by uuid references public.user_profiles(id) on delete set null,
-  created_at timestamp with time zone not null default now(),
-  updated_at timestamp with time zone not null default now(),
-  constraint chk_xitique_status check (status in ('active', 'closed')),
-  constraint chk_xitique_frequency check (frequency in ('weekly', 'biweekly', 'monthly'))
-);
-comment on table public.xitique_groups is 'Grupos de xitique disponíveis ou em andamento.';
-comment on column public.xitique_groups.frequency is 'Frequência de contribuição: weekly, biweekly, monthly.';
-
-create index if not exists idx_xitique_groups_status on public.xitique_groups (status);
-
-create trigger trg_xitique_groups_updated_at
-  before update on public.xitique_groups
-  for each row execute function public.set_updated_at();
-
-alter table public.xitique_groups enable row level security;
-
-create policy policy_xitique_groups_select
-  on public.xitique_groups
-  for select
-  using (auth.role() = 'authenticated');
-
-create policy policy_xitique_groups_insert
-  on public.xitique_groups
-  for insert
-  with check (auth.role() = 'authenticated');
-
--- ============================================================
--- TABELA: xitique_members (Participantes em Xitique)
--- ============================================================
-create table public.xitique_members (
-  id uuid primary key default gen_random_uuid(),
-  profile_id uuid not null references public.user_profiles(id) on delete cascade,
-  xitique_group_id uuid not null references public.xitique_groups(id) on delete cascade,
-  joined_at timestamp with time zone not null default now(),
-  role text not null default 'member',
-  created_at timestamp with time zone not null default now(),
-  updated_at timestamp with time zone not null default now(),
-  constraint uq_xitique_member unique (profile_id, xitique_group_id)
-);
-comment on table public.xitique_members is 'Membros que participam de um grupo de xitique.';
-
-create index if not exists idx_xitique_members_profile_id on public.xitique_members (profile_id);
-create index if not exists idx_xitique_members_group_id on public.xitique_members (xitique_group_id);
-
-create trigger trg_xitique_members_updated_at
-  before update on public.xitique_members
-  for each row execute function public.set_updated_at();
-
-alter table public.xitique_members enable row level security;
-
-create policy policy_xitique_members_select
-  on public.xitique_members
-  for select
-  using (auth.uid() = (select auth_user_id from public.user_profiles where id = public.xitique_members.profile_id));
-
-create policy policy_xitique_members_insert
-  on public.xitique_members
-  for insert
-  with check (auth.uid() = (select auth_user_id from public.user_profiles where id = public.xitique_members.profile_id));
-
--- ============================================================
 -- TABELAS DE CHAT / COMUNIDADE
 -- ============================================================
 create table public.chat_threads (
@@ -988,7 +917,6 @@ begin
 end;
 $$;
 
--- Views de compatibilidade
 create view public.profiles as
 select *
 from public.user_profiles;
@@ -998,13 +926,6 @@ create or replace view public.savings_applications_compat as
 select *
 from public.savings_accounts;
 comment on view public.savings_applications_compat is 'View de compatibilidade para frontends que consultam savings_applications em versões anteriores.';
-
-create view public.xitique_participants as
-select *
-from public.xitique_members;
-comment on view public.xitique_participants is 'View de compatibilidade para frontends que consultam xitique_participants.';
-
--- Função auxiliar para calcular dias desde a compra
 create or replace function public.days_since(purchased_at timestamptz)
 returns integer
 language sql stable as $$
@@ -1019,7 +940,6 @@ returns table (
   accumulated_profits numeric(14,2),
   savings_value numeric(14,2),
   active_investments int,
-  xitique_active int,
   last_profit text,
   available numeric(14,2),
   total_invested numeric(14,2),
@@ -1040,7 +960,6 @@ select
   ), 0)::numeric(14,2) as accumulated_profits,
   coalesce(sum(s.balance), 0) as savings_value,
   coalesce((select count(1) from public.user_investments ui where ui.user_id = up.id and ui.status = 'active'), 0) as active_investments,
-  coalesce((select count(1) from public.xitique_members xm where xm.profile_id = up.id), 0) as xitique_active,
   coalesce((
     select to_char(sum(ui.amount * (coalesce(ip.daily_profit, 0) / nullif(coalesce(ip.minimum_investment, ui.amount), 0))), 'FM999G999G990D00')
     from public.user_investments ui

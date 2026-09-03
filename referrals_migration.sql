@@ -368,7 +368,7 @@ declare
   v_profile_id uuid;
   v_code text;
   v_link text;
-  v_host text := 'zora.app';
+  v_host text := 'zora.org.za';
 begin
   select id, up.referral_code into v_profile_id, v_code
     from public.user_profiles up where up.auth_user_id = v_auth_user_id limit 1;

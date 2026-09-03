@@ -218,8 +218,8 @@ export function HomeScreen() {
         const link = document.createElement('a');
         link.href = apkUrl;
         link.setAttribute('download', 'zora.apk');
-        link.setAttribute('target', '_blank');
-        link.rel = 'noopener noreferrer';
+        link.type = 'application/vnd.android.package-archive';
+        link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
