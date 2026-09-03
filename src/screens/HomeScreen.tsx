@@ -1,6 +1,7 @@
 import * as React from 'react';
 const { useEffect, useState, useCallback, useRef } = React;
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, AppState, Platform, Linking, Alert, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, AppState, Platform, Alert, Modal } from 'react-native';
+import * as Linking from 'expo-linking';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -13,6 +14,7 @@ import { getUserProfile } from '../services/auth';
 import { getLastReadAll } from '../services/chat';
 import { invalidateFinanceCache } from '../services/finance';
 import { getGlobalQueryClient } from '../providers/QueryProvider';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 function ensureDownloadModalStyles() {
   if (Platform.OS !== 'web') return;
@@ -212,28 +214,7 @@ export function HomeScreen() {
 
   const handleDownloadApp = () => {
     setShowDownloadBanner(false);
-    if (Platform.OS === 'web') {
-      try {
-        const apkUrl = `${window.location.origin}/downloads/zorinha.apk`;
-        const link = document.createElement('a');
-        link.href = apkUrl;
-        link.setAttribute('download', 'zora.apk');
-        link.type = 'application/vnd.android.package-archive';
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => {
-          if (Alert && Alert.alert) {
-            Alert.alert(
-              'Download Iniciado',
-              'A app Zora (zorinha.apk) está a ser descarregada. Após concluir, toque no ficheiro para instalar.\n\nCaso o download não inicie automaticamente, certifique-se de que o ficheiro zorinha.apk se encontra na pasta public/downloads do projeto.',
-              [{ text: 'Entendido' }]
-            );
-          }
-        }, 300);
-      } catch {}
-    }
+    Linking.openURL('https://expo.dev/accounts/zora.org.za/projects/zora/builds/692262c7-2b75-4bf1-afa2-b4c8cbaefb9b');
   };
 
   useFocusEffect(
@@ -749,6 +730,8 @@ export function HomeScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+
+    <PWAInstallButton />
 
     <DownloadAppModal
       visible={Platform.OS === 'web' && showDownloadBanner}
