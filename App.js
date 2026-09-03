@@ -228,7 +228,7 @@ const webShellStyles = StyleSheet.create({
   },
   installButton: {
     position: 'absolute',
-    bottom: 113,
+    bottom: 150,
     right: 12,
     zIndex: 10000,
     flexDirection: 'row',
