@@ -214,7 +214,7 @@ export function HomeScreen() {
     setShowDownloadBanner(false);
     if (Platform.OS === 'web') {
       try {
-        const apkUrl = 'https://github.com/Yuranmanh86/zorinha/raw/refs/heads/main/public/downloads/zora.apk?download=1';
+        const apkUrl = `${window.location.origin}/downloads/zorinha.apk`;
         const link = document.createElement('a');
         link.href = apkUrl;
         link.setAttribute('download', 'zora.apk');
@@ -227,7 +227,7 @@ export function HomeScreen() {
           if (Alert && Alert.alert) {
             Alert.alert(
               'Download Iniciado',
-              'A app Zora (zora.apk) está a ser descarregada. Após concluir, toque no ficheiro para instalar.\n\nCaso o download não inicie automaticamente, certifique-se de que o ficheiro zora.apk se encontra na pasta public/downloads do projeto.',
+              'A app Zora (zorinha.apk) está a ser descarregada. Após concluir, toque no ficheiro para instalar.\n\nCaso o download não inicie automaticamente, certifique-se de que o ficheiro zorinha.apk se encontra na pasta public/downloads do projeto.',
               [{ text: 'Entendido' }]
             );
           }
@@ -1318,6 +1318,7 @@ const styles = StyleSheet.create({
   headerIconBtnDownload: {
     backgroundColor: '#FFF7ED',
     borderColor: '#FFE0C2',
+    transform: [{ translateY: -5 }],
   },
   downloadAppCard: {
     position: 'relative',
