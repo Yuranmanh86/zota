@@ -1272,7 +1272,13 @@ export function ChatDetailScreen() {
             ) : null}
           </ScrollView>
 
-          <View style={[styles.composerArea, { paddingBottom: composerBottomPad }]}> 
+          <View
+            style={[
+              styles.composerArea,
+              Platform.OS === 'web' ? styles.composerAreaWeb : null,
+              { paddingBottom: composerBottomPad },
+            ]}
+          >
             {reply ? (
               <View style={[styles.replyBar, reply.isMine ? styles.replyBarMine : styles.replyBarOther]}>
                 <View style={[styles.replyBarIndicator, { backgroundColor: reply.isMine ? WA_GREEN : WA_GREEN_DARK }]} />
@@ -1608,8 +1614,12 @@ const styles = StyleSheet.create({
   composerArea: {
     backgroundColor: '#F0F2F5',
     paddingTop: 8,
-    paddingBottom: Platform.OS === 'web' ? 108 : 24,
+    paddingBottom: 24,
     width: '100%',
+  },
+  composerAreaWeb: {
+    transform: [{ translateY: -80 }],
+    marginBottom: -80,
   },
   emojiPanel: {
     flexDirection: 'row',
