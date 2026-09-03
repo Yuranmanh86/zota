@@ -44,5 +44,7 @@
     "web:build": "npm run build"
   },
   "private": true,
-  "devDependencies": {}
+  "devDependencies": {
+    "wrangler": "^4.128.0"
+  }
 }
