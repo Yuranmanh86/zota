@@ -1619,8 +1619,11 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   composerAreaMobileWeb: {
-    transform: [{ translateY: -80 }],
-    marginBottom: -80,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 88,
+    zIndex: 1000,
   },
   emojiPanel: {
     flexDirection: 'row',
