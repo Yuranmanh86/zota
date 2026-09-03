@@ -1605,7 +1605,12 @@ const styles = StyleSheet.create({
   suspensionText: { color: '#7F1D1D', fontSize: 12, marginTop: 2 },
   suspensionCountdown: { color: '#991B1B', fontSize: 12, fontWeight: '800', marginTop: 4 },
 
-  composerArea: { backgroundColor: '#F0F2F5', paddingTop: 8, paddingBottom: 24, width: '100%' },
+  composerArea: {
+    backgroundColor: '#F0F2F5',
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'web' ? 108 : 24,
+    width: '100%',
+  },
   emojiPanel: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -1466,7 +1466,7 @@ export function ChatScreen() {
           onPress={() => { setSearch(''); setShowAllContacts(true); }}
           activeOpacity={0.8}
         >
-          <Ionicons name="chatbubble-outline" size={26} color="#FFF" />
+          <Ionicons name="chatbox-ellipses-outline" size={26} color="#FFF" />
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -1700,7 +1700,7 @@ const styles = StyleSheet.create({
   fabContainer: {
     position: 'absolute',
     right: 20,
-    bottom: 140,
+    bottom: Platform.OS === 'web' ? 180 : 140,
     zIndex: 50,
     pointerEvents: 'auto',
   },
