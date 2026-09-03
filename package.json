@@ -40,7 +40,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "build": "expo export --platform web && node scripts/add-pwa-meta.js",
+    "build": "expo export --platform web && node scripts/add-pwa-meta.js && node scripts/remove-large-web-assets.js",
     "web:build": "npm run build"
   },
   "private": true,

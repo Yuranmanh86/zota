@@ -214,7 +214,7 @@ export function HomeScreen() {
     setShowDownloadBanner(false);
     if (Platform.OS === 'web') {
       try {
-        const apkUrl = `${window.location.origin}/downloads/zora.apk`;
+        const apkUrl = 'https://github.com/Yuranmanh86/zorinha/raw/refs/heads/main/public/downloads/zora.apk?download=1';
         const link = document.createElement('a');
         link.href = apkUrl;
         link.setAttribute('download', 'zora.apk');
