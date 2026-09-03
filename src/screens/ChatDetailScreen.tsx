@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, RefreshControl, View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Linking, Alert, Keyboard } from 'react-native';
+import { Image, RefreshControl, View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Linking, Alert, Keyboard, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -218,6 +218,7 @@ async function loadSenderProfiles(senderIds: string[]): Promise<any[]> {
 }
 
 export function ChatDetailScreen() {
+  const { width: viewportWidth } = useWindowDimensions();
   const navigation = useNavigation<any>();
   const route = useRoute();
   const params = route.params as RouteParams;
@@ -1275,7 +1276,7 @@ export function ChatDetailScreen() {
           <View
             style={[
               styles.composerArea,
-              Platform.OS === 'web' ? styles.composerAreaWeb : null,
+              Platform.OS === 'web' && viewportWidth <= 600 ? styles.composerAreaMobileWeb : null,
               { paddingBottom: composerBottomPad },
             ]}
           >
@@ -1617,7 +1618,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     width: '100%',
   },
-  composerAreaWeb: {
+  composerAreaMobileWeb: {
     transform: [{ translateY: -80 }],
     marginBottom: -80,
   },
