@@ -1622,7 +1622,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 88,
+    bottom: 16,
     zIndex: 1000,
   },
   emojiPanel: {

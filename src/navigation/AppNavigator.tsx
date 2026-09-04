@@ -1,6 +1,6 @@
 import * as React from 'react';
 const { useEffect } = React;
-import { View, StyleSheet, Text, Platform, StatusBar as RNStatusBar } from 'react-native';
+import { View, StyleSheet, Text, Platform, StatusBar as RNStatusBar, useWindowDimensions } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer, CommonActions } from '@react-navigation/native';
@@ -47,12 +47,16 @@ function setupSystemBars() {
 
 function MainTabs() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
   const tabBarBottom = Math.max(1, insets.bottom + 1);
   const isWeb = Platform.OS === 'web';
+  const webTabBarWidth = Math.max(0, Math.min(windowWidth, 480) - 28);
   const tabBarStyleBase: any = {
-    position: isWeb ? 'fixed' : 'absolute',
-    left: 14,
-    right: 14,
+    position: 'absolute',
+    left: isWeb ? '50%' : 14,
+    right: isWeb ? undefined : 14,
+    width: isWeb ? webTabBarWidth : undefined,
+    marginLeft: isWeb ? -(webTabBarWidth / 2) : undefined,
     bottom: isWeb ? 12 : tabBarBottom,
     height: 76,
     borderRadius: 30,
